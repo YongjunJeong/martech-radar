@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "_macros.html" import bar %}
+{% block content %}
+<section class="hero">
+  {% if overview.latest_run %}
+  <p class="eyebrow">
+    {{ t('overview.latest_run',
+            run=overview.latest_run.id,
+            when=overview.latest_run.started_at[:16].replace('T',' '),
+            scans=overview.latest_run.scan_count,
+            fingerprints=overview.latest_run.fingerprint_count or '-')|safe }}
+  </p>
+  {% else %}
+  <p class="eyebrow empty">{{ t('overview.no_runs', command='./bin/radar batch')|safe }}</p>
+  {% endif %}
+
+  {% if overview.judged_count %}
+    <h1 class="statement">{{ t('overview.statement', judged=overview.judged_count,
+                                greenfield=overview.greenfield|length)|safe }}</h1>
+  {% else %}
+    <h1 class="statement">{{ t('overview.statement.empty') }}</h1>
+  {% endif %}
+
+  <p class="figures">
+    <a href="/companies"><b>{{ overview.company_count }}</b>{{ t('overview.card.registered') }}</a>
+    <a href="/companies?state=engagement"><b>{{ overview.with_engagement|length }}</b>{{ t('overview.card.holders') }}</a>
+    <a href="/companies?state=greenfield"><b>{{ overview.greenfield|length }}</b>{{ t('overview.card.greenfield') }}</a>
+    <a href="/companies?state=unjudged"><b>{{ overview.unjudged|length }}</b>{{ t('overview.card.unjudged') }}</a>
+  </p>
+
+  <p class="signal-line">
+    {% if overview.signal_counts %}
+      <a href="/signals">{{ t('overview.signals_line', n=overview.signal_total) }}</a>
+      {% for kind, count in overview.signal_counts|dictsort %}
+        <span class="sep">·</span>
+        <a class="k-{{ kind|lower }}" href="/signals?kind={{ kind }}">{{ kind_label.get(kind, kind) }} {{ count }}</a>
+      {% endfor %}
+    {% else %}
+      <span class="muted">{{ t('overview.no_change') }}</span>
+    {% endif %}
+  </p>
+</section>
+
+<h2>{{ t('overview.by_industry') }}</h2>
+<table>
+  <thead><tr>
+    <th>{{ t('common.industry') }}</th><th class="n">{{ t('common.companies') }}</th>
+    <th class="n">{{ t('overview.col.holders') }}</th>
+    <th class="n">{{ t('overview.col.greenfield') }}</th>
+    <th class="n">{{ t('overview.col.unjudged') }}</th>
+    <th>{{ t('overview.col.held_vendors') }}</th>
+  </tr></thead>
+  <tbody>
+  {% for row in industries_rows %}
+    <tr>
+      <td><a href="/companies?industry={{ row.industry }}">{{ row.label }}</a></td>
+      <td class="n">{{ row.companies }}</td>
+      <td class="n">{{ row.with_engagement or '·' }}</td>
+      <td class="n {{ 'hot' if row.greenfield }}">{{ row.greenfield or '·' }}</td>
+      <td class="n muted">{{ row.unjudged or '·' }}</td>
+      <td class="vendors muted">
+        {%- for name, count in row.vendors -%}
+          {{ name }}{% if count > 1 %} ×{{ count }}{% endif %}{% if not loop.last %}, {% endif %}
+        {%- endfor -%}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>{{ t('overview.engagement_share') }} <a class="more" href="/vendors">{{ t('overview.all_vendors') }}</a></h2>
+<table>
+  <thead><tr><th>{{ t('common.vendor') }}</th><th class="n">{{ t('common.company_count') }}</th><th>{{ t('common.share') }}</th></tr></thead>
+  <tbody>
+  {% for v in vendors %}
+    <tr>
+      <td><a href="/vendors/{{ v.id }}">{{ v.name }}</a></td>
+      <td class="n">{{ v.count }}</td>
+      <td class="barcell">{{ bar(v.count, overview.judged_count) }} {{ (100 * v.share)|round|int }}%</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

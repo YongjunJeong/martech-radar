@@ -1,0 +1,51 @@
+# Copy to radar.toml and edit. Every setting is optional; these are the defaults.
+
+[scan]
+# Sites serve different tags to different markets — present the locale and
+# timezone of the visitors you care about.
+locale = "en-US"
+timezone = "UTC"
+concurrency = 3
+
+# Read each site's robots.txt and skip what it disallows. Per-company
+# exceptions (with a recorded reason) are made on the Manage page.
+respect_robots = true
+robots_user_agent = "*"
+# Minimum gap between two requests to the same site, on top of Crawl-delay.
+per_site_delay_ms = 1000
+
+[cadence]
+# How often each watchlist tier is due, read only by `radar batch --due`.
+# Keys are your tier labels; "default" covers untiered targets and any tier
+# not listed. Durations are "12h" / "7d" style.
+default = "7d"
+# P1 = "1d"
+# P2 = "7d"
+# P3 = "30d"
+
+[notify]
+# Where `radar notify` (and the end of every batch) pushes NEW signals.
+# Each signal is sent exactly once; leave webhook empty to disable.
+webhook = ""
+# "slack" posts {"text": ...} (Slack/most chat tools); "json" posts the raw list.
+format = "slack"
+# kinds = ["HOME_MIGRATION", "HOME_REMOVAL", "COMPETITOR_MIGRATION",
+#          "COMPETITOR_REMOVAL", "COMPETITOR_NEW", "HOME_NEW"]
+max_items = 20
+
+[vendor]
+# Fingerprint id of your own product, if you sell one — e.g. "braze".
+# Setting it splits "we lost this account" from "a competitor lost it".
+# Leave empty to treat every vendor alike.
+home = ""
+
+[server]
+# Required before the dashboard will bind to anything but 127.0.0.1.
+token = ""
+# Whether the scan box may point at private addresses. Off by default so a
+# shared dashboard cannot be used to probe the network it sits on.
+allow_private_targets = false
+
+[ui]
+# "en" or "ko"
+language = "en"

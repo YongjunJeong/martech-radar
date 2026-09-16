@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t('ops.title') }}</h1>
+<p class="lede">{{ t('ops.lede') }}</p>
+
+{% if msg %}<p class="flash">{{ msg }}</p>{% endif %}
+
+<p class="worker {{ worker.state }}">
+  {% if worker.state == 'alive' %}{{ t('ops.worker.alive', name=worker.name, ago=worker.ago) }}
+  {% elif worker.state == 'stale' %}{{ t('ops.worker.stale', at=worker.at) }}
+  {% else %}{{ t('ops.worker.none') }}{% endif %}
+</p>
+
+{% if runs %}
+<h2>{{ t('ops.runs') }}</h2>
+{% for r in runs %}
+  <p class="flash running">
+    <a href="/runs/{{ r.run_id }}">{{ t('manage.in_progress', run=r.run_id, done=r.done, total=r.total) }}</a>
+  </p>
+{% endfor %}
+{% endif %}
+
+<h2>{{ t('ops.scan') }}</h2>
+<p class="note">{{ t('ops.scan.note') }}</p>
+<div class="actions">
+  {% for sc in scopes %}
+  <form method="post" action="/ops/scan">
+    <input type="hidden" name="scope" value="{{ sc.scope }}">
+    <button type="submit" class="{{ '' if loop.first else 'secondary' }}">{{ sc.label }}</button>
+  </form>
+  {% endfor %}
+</div>
+
+<h2>{{ t('ops.tasks') }}</h2>
+<p class="note">{{ t('ops.tasks.note') }}</p>
+<div class="task-grid">
+  {% for kind, dry in (('digest', 0), ('redetect', 0), ('notify_dry', 1), ('notify', 0), ('hygiene', 0), ('backup', 0)) %}
+  <form method="post" action="/ops/task" class="task-card">
+    <input type="hidden" name="kind" value="{{ 'notify' if kind == 'notify_dry' else kind }}">
+    {% if dry %}<input type="hidden" name="dry_run" value="1">{% endif %}
+    <button type="submit" class="secondary">{{ t('ops.task.' ~ kind) }}</button>
+    <span class="muted">{{ t('ops.task.' ~ kind ~ '.hint') }}</span>
+  </form>
+  {% endfor %}
+</div>
+
+<h2>{{ t('ops.history') }}</h2>
+{% if tasks %}
+<table>
+  <thead><tr>
+    <th>#</th><th>{{ t('ops.tasks') }}</th><th>{{ t('common.state') }}</th>
+    <th>{{ t('common.time') }}</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for x in tasks %}
+    <tr>
+      <td><a href="/ops/tasks/{{ x.id }}">#{{ x.id }}</a></td>
+      <td>{{ task_kind_label.get(x.kind, x.kind) }}{% if 'dry_run' in x.params_json %} <span class="muted">dry run</span>{% endif %}</td>
+      <td><span class="chip {{ 'hot' if x.state == 'failed' else ('s-new' if x.state == 'running') }}">{{ task_state_label.get(x.state, x.state) }}</span>
+          {% if x.error %}<span class="muted">{{ x.error }}</span>{% endif %}</td>
+      <td class="muted">{{ (x.finished_at or x.started_at or x.requested_at)[:16].replace('T',' ') }}</td>
+      <td class="n muted">{% if x.output_len %}{{ x.output_len }} B{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">{{ t('ops.history.none') }}</p>
+{% endif %}
+{% endblock %}

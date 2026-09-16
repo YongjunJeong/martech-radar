@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ t('company.brief.title', company=company) }}{% endblock %}
+{% block content %}
+<h1>{{ t('company.brief.title', company=company) }}</h1>
+<p class="lede"><a href="/companies/{{ target_id }}">{{ company }}</a> · {{ t('company.brief.note') }}</p>
+{% if not usable %}<p class="empty warn">{{ t('company.brief.unusable') }}</p>{% endif %}
+<pre class="out">{{ text }}</pre>
+{% endblock %}

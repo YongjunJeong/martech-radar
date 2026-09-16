@@ -1,0 +1,49 @@
+# Example watchlist. Copy to targets.yaml, replace with the companies you
+# actually want to watch, then load it:
+#
+#   radar watchlist import targets.yaml
+#
+# After that the database is the watchlist — edit it on the dashboard's
+# Manage page, or re-import a file any time. Companies are never deleted on
+# import; ones missing from the file are paused (their history stays).
+#
+#   id        a stable key; the history hangs off it, so never rename it
+#   industry  must be declared under `industries` below
+#   urls      the first is the home page; add deeper pages when a vendor
+#             only loads there (product page, checkout, booking)
+#   robots_policy  "respect" (default) or "override" — an override needs a
+#             robots_note saying why; the reason is kept with the record
+
+industries:
+  retail:
+    label: Retail & e-commerce
+  travel:
+    label: Travel & hospitality
+  finance:
+    label: Banking & insurance
+
+targets:
+  - id: example_shop
+    company: Example Shop
+    industry: retail
+    urls:
+      - https://shop.example/
+      - https://shop.example/products/1
+    # A second URL widens what the stack can show — vendors often load only
+    # on product or event pages. Prefix a URL with mobile: to scan it with a
+    # mobile browser profile; its history is kept separate from desktop.
+    #   - https://shop.example/goods/1234
+    #   - mobile:https://shop.example/
+
+  - id: example_air
+    company: Example Airlines
+    industry: travel
+    urls:
+      - https://air.example/
+
+  - id: example_bank
+    company: Example Bank
+    industry: finance
+    note: consent banner gates most tags — expect a thin stack
+    urls:
+      - https://bank.example/

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MarTech Deal Radar{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">MarTech <b>Deal Radar</b></a>
+    <nav>
+      <a href="/" class="{{ 'on' if active == 'index' }}">{{ t('nav.overview') }}</a>
+      <a href="/signals" class="{{ 'on' if active == 'signals' }}">{{ t('nav.signals') }}</a>
+      <a href="/companies" class="{{ 'on' if active == 'companies' }}">{{ t('nav.companies') }}</a>
+      <a href="/vendors" class="{{ 'on' if active == 'vendors' }}">{{ t('nav.vendors') }}</a>
+      <a href="/fingerprints" class="{{ 'on' if active == 'fingerprints' }}">{{ t('nav.fingerprints') }}</a>
+      <a href="/manage" class="{{ 'on' if active == 'manage' }}">{{ t('nav.manage') }}</a>
+      <a href="/ops" class="{{ 'on' if active == 'ops' }}">{{ t('nav.ops') }}</a>
+    </nav>
+    {% if requires_login %}
+    <form method="post" action="/logout" class="signout">
+      <button type="submit">{{ t('nav.signout') }}</button>
+    </form>
+    {% endif %}
+  </div>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>
+  {{ t('footer.readonly') }}
+</footer>
+</body>
+</html>

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% from "_macros.html" import state_chip %}
+{% block title %}{{ c.company }} — Deal Radar{% endblock %}
+{% block content %}
+<h1>{{ c.company }}
+  {% if c.company_en %}<span class="muted">{{ c.company_en }}</span>{% endif %}</h1>
+<p class="lede">
+  <a href="/companies?industry={{ c.industry }}">{{ c.industry_label }}</a>
+  {% if c.tier %} · {{ c.tier }}{% endif %}
+  {% if not c.enabled %} · <span class="chip warn">{{ t('companies.chip.paused') }}</span>{% endif %}
+  · {% for u in c.urls %}<a class="url" href="{{ u }}" rel="noreferrer noopener" target="_blank">{{ u }}</a>{% endfor %}
+</p>
+{% if c.note %}<p class="note">{{ c.note }}</p>{% endif %}
+
+<div class="actions">
+  <a class="pill" href="/companies/{{ c.id }}/brief">{{ t('company.brief') }}</a>
+  {% if c.enabled %}
+  <form method="post" action="/manage/scan">
+    <input type="hidden" name="id" value="{{ c.id }}">
+    <input type="hidden" name="scope" value="{{ c.id }}">
+    <button type="submit" class="secondary">{{ t('company.scan_now') }}</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if c.off_domain %}
+  <p class="empty warn">{{ t('company.off_domain', host=c.landing|join(', ')) }}</p>
+{% elif c.host_shift %}
+  <p class="note">{{ t('company.host_shift', run=c.host_shift.run_id,
+                        previous=c.host_shift.previous, current=c.host_shift.current) }}</p>
+{% endif %}
+
+{% if not c.judged %}
+  <p class="empty warn">{{ t('company.never_judged',
+      status=status_label.get(c.last_status, c.last_status))|safe }}</p>
+{% endif %}
+
+{% if c.signals %}
+<h2>{{ t('company.signals') }}</h2>
+{% for s in c.signals %}
+  <article class="signal p{{ s.priority }}">
+    <div class="sig-head">
+      <span class="kind k-{{ s.kind|lower }}">{{ kind_label.get(s.kind, s.kind) }}</span>
+    </div>
+    <p class="headline">{{ s.headline }}</p>
+    <p class="detail">{{ s.detail }}</p>
+  </article>
+{% endfor %}
+{% endif %}
+
+{% if c.judged %}
+<h2>{{ t('company.stack') }}
+  <span class="muted">{{ t('company.stack.summary', total=c.maturity.total, score=c.maturity.score) }}</span>
+</h2>
+<p class="note">{{ t('company.stack.hint') }}</p>
+
+{% if c.identifiers %}
+<h3 class="cat">{{ t('company.identifiers') }}</h3>
+<p class="note">{{ t('company.identifiers.note') }}</p>
+<table class="ev">
+  <thead><tr><th>kind</th><th>value</th></tr></thead>
+  <tbody>
+  {% for i in c.identifiers %}
+    <tr><td>{{ i.kind }}</td><td><code>{{ i.value }}</code></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% for category, rows in c.stack_groups %}
+  <h3 class="cat">{{ category_label.get(category, category) }}</h3>
+  {% for r in rows %}
+    <details class="vendor {{ 'weak' if r.indirect_only }}">
+      <summary>
+        <span class="v-verdict v-{{ r.verdict|lower }}">{{ verdict_label.get(r.verdict, r.verdict) }}</span>
+        <a class="v-name" href="/vendors/{{ r.id }}">{{ r.name }}</a>
+        {{ state_chip(r.state) }}
+        <span class="muted">{{ r.score }} · {{ r.direct_layers|join(', ') or t('company.no_direct') }}</span>
+        {% if r.indirect_only %}<span class="chip warn">{{ t('company.mention_only') }}</span>{% endif %}
+      </summary>
+      <div class="evidence">
+        <p class="muted">
+          {{ t('company.seen_on', url=r.seen_on) }}
+          {%- if r.run_streak %}{{ t('company.streak', streak=r.run_streak, judged=r.judged_runs) }}{% endif %}
+        </p>
+        <table class="ev">
+          <thead><tr><th>{{ t('common.layer') }}</th><th>{{ t('common.strength') }}</th>
+            <th>{{ t('common.pattern') }}</th><th>{{ t('common.observed') }}</th></tr></thead>
+          <tbody>
+          {% for m in r.matches %}
+            <tr class="{{ 'indirect' if m.layer in ('source', 'declared') }}">
+              <td>{{ m.layer }}</td><td>{{ m.strength }}</td>
+              <td><code>{{ m.pattern }}</code></td><td><code>{{ m.value }}</code></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  {% endfor %}
+{% endfor %}
+{% endif %}
+
+<h2>{{ t('company.timeline') }}</h2>
+<table>
+  <thead><tr><th>{{ t('common.run') }}</th><th>{{ t('common.time') }}</th>
+    <th>{{ t('common.landing') }}</th>
+    <th class="n">URL</th><th class="n">{{ t('common.vendors') }}</th>
+    <th>{{ t('common.note') }}</th></tr></thead>
+  <tbody>
+  {% for row in c.timeline %}
+    <tr class="{{ '' if row.judged else 'skipped' }}">
+      <td>{{ t('common.run') }} {{ row.run_id }}</td>
+      <td class="muted">{{ row.scanned_at[:16].replace('T',' ') }}</td>
+      <td class="url">{{ row.hosts|join(', ') }}</td>
+      <td class="n">{{ row.urls_ok }}/{{ row.urls_scanned }}</td>
+      <td class="n">{{ row.vendor_count if row.judged else '·' }}</td>
+      <td>{% if not row.judged %}<span class="chip warn">{{ t('company.timeline.excluded') }}</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>{{ t('company.scans') }}</h2>
+<table>
+  <thead><tr><th>{{ t('common.time') }}</th><th>{{ t('common.status') }}</th>
+    <th class="n">HTTP</th><th class="n">ms</th><th>URL</th></tr></thead>
+  <tbody>
+  {% for s in c.scans %}
+    <tr>
+      <td class="muted">{{ s.started_at[:19].replace('T',' ') }}</td>
+      <td><span class="chip {{ 'ok' if s.status in trusted else 'warn' }}">{{ status_label.get(s.status, s.status) }}</span></td>
+      <td class="n">{{ s.http_status or '·' }}</td>
+      <td class="n">{{ s.duration_ms }}ms</td>
+      <td class="url">{{ s.url }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

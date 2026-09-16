@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t('manage.title') }}</h1>
+<p class="lede">{{ t('manage.lede') }}</p>
+
+{% if msg %}<p class="flash">{{ msg }}</p>{% endif %}
+
+{% if queued %}
+  {% for q in queued %}
+    <p class="flash running">
+      <a href="/runs/{{ q.run_id }}">{{ t('manage.in_progress', run=q.run_id,
+         done=q.done, total=q.total) }}</a>
+    </p>
+  {% endfor %}
+{% endif %}
+
+<div class="actions">
+  <form method="post" action="/manage/scan">
+    <input type="hidden" name="scope" value="all">
+    <button type="submit">{{ t('manage.scan_all') }}</button>
+  </form>
+  <a class="pill" href="/manage?edit=">{{ t('manage.add') }}</a>
+</div>
+
+{% if not industries %}
+<div class="note warnbox">
+  <span class="tag">{{ t('manage.no_industries') }}</span>
+  <p>{{ t('manage.no_industries_hint') }}</p>
+</div>
+{% endif %}
+
+<details class="vendor" {{ 'open' if not industries }}>
+  <summary><span class="v-name">{{ t('manage.industry_add') }}</span>
+    <span class="muted">{{ t('manage.industry_count', n=industries|length) }}</span></summary>
+  <form method="post" action="/manage/industry" class="inline-form evidence">
+    <input name="code" placeholder="fashion" pattern="[a-z0-9][a-z0-9_]*" required>
+    <input name="label" placeholder="{{ t('manage.industry_label') }}" required>
+    <input name="label_en" placeholder="Fashion & Apparel">
+    <button type="submit">{{ t('manage.save') }}</button>
+  </form>
+</details>
+
+<h2>{{ editing and t('manage.edit_one', id=editing.id) or t('manage.add') }}</h2>
+<form method="post" action="/manage/save" class="target-form">
+  <div class="grid">
+    <label>{{ t('manage.field.id') }}
+      <input name="id" value="{{ editing.id if editing }}" {{ 'readonly' if editing }}
+             pattern="[a-z0-9][a-z0-9_]*" required>
+      <small>{{ t('manage.field.id_hint') }}</small></label>
+    <label>{{ t('common.company') }}
+      <input name="company" value="{{ editing.company if editing }}" required></label>
+    <label>{{ t('manage.field.company_en') }}
+      <input name="company_en" value="{{ editing.company_en if editing and editing.company_en }}"></label>
+    <label>{{ t('common.industry') }}
+      <select name="industry" required>
+        {% for code, label in industries|dictsort(by='value') %}
+          <option value="{{ code }}" {{ 'selected' if editing and editing.industry == code }}>{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label>{{ t('manage.field.tier') }}
+      <input name="tier" value="{{ editing.tier if editing and editing.tier }}"></label>
+    <label class="check">
+      <input type="checkbox" name="enabled" value="1"
+             {{ 'checked' if not editing or editing.enabled }}>
+      {{ t('manage.field.enabled') }}</label>
+  </div>
+
+  <label class="wide">URL
+    <textarea name="urls" rows="3" required
+      placeholder="https://example.com/&#10;https://example.com/category">{{ editing.urls|join('\n') if editing }}</textarea>
+    <small>{{ t('manage.field.urls_hint') }}</small></label>
+
+  <label class="wide">{{ t('common.note') }}
+    <input name="note" value="{{ editing.note if editing and editing.note }}"></label>
+
+  <fieldset class="robots">
+    <legend>{{ t('manage.robots') }}</legend>
+    <label class="check">
+      <input type="radio" name="robots_policy" value="respect"
+             {{ 'checked' if not editing or editing.robots_policy != 'override' }}>
+      {{ t('manage.robots.respect') }}</label>
+    <label class="check">
+      <input type="radio" name="robots_policy" value="override"
+             {{ 'checked' if editing and editing.robots_policy == 'override' }}>
+      {{ t('manage.robots.override') }}</label>
+    <label class="wide">{{ t('manage.robots.reason') }}
+      <input name="robots_note"
+             value="{{ editing.robots_note if editing and editing.robots_note }}"></label>
+    <p class="note">{{ t('manage.robots.hint') }}</p>
+  </fieldset>
+
+  <button type="submit">{{ t('manage.save') }}</button>
+</form>
+
+{% set turned_away = targets|selectattr('last_status', 'equalto', 'SKIPPED_BY_ROBOTS')|list %}
+<h2>{{ t('manage.watching', n=targets|length) }}</h2>
+{% if turned_away %}
+<p class="note">{{ t('manage.turned_away_note', n=turned_away|length) }}</p>
+{% endif %}
+<table>
+  <thead><tr>
+    <th>{{ t('common.company') }}</th><th>{{ t('common.industry') }}</th>
+    <th>URL</th><th>robots</th><th>{{ t('common.state') }}</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for row in targets %}
+    <tr class="{{ '' if row.enabled else 'muted' }}">
+      <td><a href="/companies/{{ row.id }}">{{ row.company }}</a>
+        <span class="muted mono">{{ row.id }}</span></td>
+      <td class="muted">{{ industries.get(row.industry, row.industry) }}</td>
+      <td class="url">{{ row.urls[0] }}{% if row.urls|length > 1 %}
+        <span class="muted">+{{ row.urls|length - 1 }}</span>{% endif %}</td>
+      <td>{% if row.robots_policy == 'override' %}
+            <span class="chip warn" title="{{ row.robots_note }}">{{ t('manage.robots.override_chip') }}</span>
+          {% elif row.last_status == 'SKIPPED_BY_ROBOTS' %}
+            <span class="chip hot">{{ t('manage.robots.turned_away') }}</span>
+          {% else %}<span class="chip ok">{{ t('manage.robots.respect_chip') }}</span>{% endif %}</td>
+      <td>{% if row.enabled %}<span class="chip ok">{{ t('manage.on') }}</span>
+          {% else %}<span class="chip">{{ t('manage.paused') }}</span>{% endif %}</td>
+      <td class="row-actions">
+        <a class="pill sm" href="/manage?edit={{ row.id }}">{{ t('manage.edit') }}</a>
+        <form method="post" action="/manage/toggle">
+          <input type="hidden" name="id" value="{{ row.id }}">
+          {% if row.enabled %}{% else %}<input type="hidden" name="enabled" value="1">{% endif %}
+          <button class="pill sm" type="submit">{{ t('manage.pause') if row.enabled else t('manage.resume') }}</button>
+        </form>
+        <form method="post" action="/manage/scan">
+          <input type="hidden" name="id" value="{{ row.id }}">
+          <input type="hidden" name="scope" value="{{ row.id }}">
+          <button class="pill sm" type="submit" {{ 'disabled' if not row.enabled }}>{{ t('manage.scan_one') }}</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

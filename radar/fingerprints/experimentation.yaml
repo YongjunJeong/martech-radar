@@ -1,0 +1,54 @@
+# A/B testing and feature flags.
+category: experimentation
+fingerprints:
+  - id: hackle
+    name: Hackle
+    vendor_url: https://hackle.io
+    note: >
+      Korean A/B testing platform. Frequently loaded through a first-party
+      bundle, so the network layer can be silent while the globals are not -
+      hackleVstrId is often the only trace.
+    signals:
+      hosts: [hackle.io, sdk.hackle.io, api.hackle.io]
+      window: ["re:^hackle", "re:^_hackle", "Hackle"]
+    weak_signals:
+      tokens: ["re:^hackle", "re:^_hackle"]
+
+  - id: optimizely
+    name: Optimizely
+    signals:
+      hosts: [optimizely.com, cdn.optimizely.com, logx.optimizely.com]
+      window: ["optimizely", "optimizelyEdge"]
+      storage: ["re:^optimizely"]
+
+  - id: vwo
+    name: VWO
+    signals:
+      hosts: [visualwebsiteoptimizer.com, vwo.com, dev.visualwebsiteoptimizer.com]
+      window: ["VWO", "_vwo_code", "_vis_opt_queue"]
+      storage: ["re:^_vwo", "re:^_vis_opt"]
+
+  - id: ab_tasty
+    name: AB Tasty
+    signals:
+      hosts: [abtasty.com, try.abtasty.com]
+      window: ["ABTasty", "abtasty"]
+
+  - id: kameleoon
+    name: Kameleoon
+    signals:
+      hosts: [kameleoon.eu, kameleoon.com, kameleoon.io]
+      window: ["Kameleoon", "kameleoonQueue"]
+
+  - id: launchdarkly
+    name: LaunchDarkly
+    signals:
+      hosts: [launchdarkly.com, clientstream.launchdarkly.com, events.launchdarkly.com]
+      window: ["LDClient", "ldclient"]
+
+
+  - id: google_optimize
+    name: Google Optimize (sunset)
+    note: 2023년 서비스 종료됐지만 아직 로드하는 사이트가 남아 있다.
+    signals:
+      hosts: [googleoptimize.com]

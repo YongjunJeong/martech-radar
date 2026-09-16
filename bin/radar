@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Thin wrapper so the venv never has to be activated by hand.
+#
+# PYTHONPATH rather than `cd`: cron runs with an arbitrary working directory,
+# but relative arguments (`--out digest.md`) must still resolve against the
+# caller's, not ours.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec "$ROOT/.venv/bin/python" -m radar.cli "$@"

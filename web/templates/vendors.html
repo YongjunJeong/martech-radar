@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_macros.html" import bar %}
+{% block content %}
+<h1>{{ t('vendors.title') }}</h1>
+<p class="lede">{{ t('vendors.basis', n=judged) }}</p>
+
+<div class="filters">
+  <a class="pill {{ 'on' if not category }}" href="/vendors">{{ t('common.all') }}</a>
+  {% for cat in categories %}
+    <a class="pill {{ 'on' if category == cat }}" href="/vendors?category={{ cat }}">{{ category_label.get(cat, cat) }}</a>
+  {% endfor %}
+  <a class="pill sm {{ 'on' if unseen }}" href="/vendors?unseen=1{{ '&category=' ~ category if category }}">
+    {{ t('vendors.include_unseen') }}
+  </a>
+</div>
+
+{% for cat, rows in vendor_groups %}
+  <h2 class="cat">{{ category_label.get(cat, cat) }}</h2>
+  <table>
+    <thead><tr><th>{{ t('common.vendor') }}</th><th class="n">{{ t('common.company_count') }}</th>
+    <th>{{ t('common.share') }}</th><th>{{ t('common.companies') }}</th></tr></thead>
+    <tbody>
+    {% for v in rows %}
+      <tr class="{{ 'muted' if not v.count }}">
+        <td><a href="/vendors/{{ v.id }}">{{ v.name }}</a></td>
+        <td class="n">{{ v.count or '·' }}</td>
+        <td class="barcell">{{ bar(v.count, judged) }} {{ (100 * v.share)|round|int }}%</td>
+        <td class="vendors">
+          {% for co in v.companies[:8] %}<a class="chip" href="/companies/{{ co.id }}">{{ co.company }}</a>{% endfor %}
+          {% if v.companies|length > 8 %}<span class="muted">{{ t('common.and_more', n=v.companies|length - 8) }}</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,165 @@
+# Paid media pixels. Individually low value, collectively a spend signal:
+# an account running six retargeting pixels and no engagement platform is
+# buying the same user over and over instead of retaining them.
+category: advertising
+fingerprints:
+  - id: meta_pixel
+    name: Meta Pixel
+    signals:
+      hosts: [connect.facebook.net, facebook.net]
+      window: ["fbq", "_fbq"]
+      storage: ["_fbp", "_fbc"]
+
+  - id: google_ads
+    name: Google Ads
+    signals:
+      hosts: [googleadservices.com, googlesyndication.com, doubleclick.net]
+      storage: ["re:^_gcl_"]
+
+  - id: criteo
+    name: Criteo
+    signals:
+      hosts: [criteo.com, criteo.net, static.criteo.net]
+      window: ["criteo_q", "Criteo"]
+
+  - id: taboola
+    name: Taboola
+    signals:
+      hosts: [taboola.com, cdn.taboola.com]
+      window: ["_taboola"]
+
+  - id: outbrain
+    name: Outbrain
+    signals:
+      hosts: [outbrain.com, widgets.outbrain.com]
+      window: ["obApi"]
+    weak_signals:
+      window: ["OBR"]
+
+  - id: tiktok_pixel
+    name: TikTok Pixel
+    signals:
+      hosts: [analytics.tiktok.com, tiktokw.us]
+      window: ["ttq", "TiktokAnalyticsObject"]
+
+  - id: pinterest_tag
+    name: Pinterest Tag
+    signals:
+      hosts: [ct.pinterest.com, pinimg.com]
+      window: ["pintrk"]
+
+  - id: x_pixel
+    name: X (Twitter) Pixel
+    signals:
+      hosts: [ads-twitter.com, static.ads-twitter.com]
+      window: ["twq"]
+
+  - id: kakao_pixel
+    name: Kakao Pixel
+    note: >
+      daumcdn.net serves plenty of non-advertising assets, so the tell is the
+      /kas/ script path, not the domain.
+    signals:
+      scripts: ["kas/static/kp.js", "t1.daumcdn.net/kas"]
+      window: ["kakaoPixel"]
+    weak_signals:
+      window: ["Kakao"]
+
+  - id: enliple
+    name: Enliple (MOBON)
+    note: Korean retargeting network.
+    signals:
+      hosts: [mobon.net, enliple.com, cdn.megadata.co.kr, megadata.co.kr]
+      window: ["MobonTracker"]
+    weak_signals:
+      window: ["enp"]
+
+  - id: adinsight
+    name: Adinsight
+    signals:
+      hosts: [adinsight.co.kr, cdn.adinsight.co.kr]
+      window: ["adinsight"]
+
+
+  - id: tpmn
+    name: TPMN
+    signals:
+      hosts: [tpmn.co.kr, tpmn.io]
+
+  - id: widerplanet
+    name: WiderPlanet
+    vendor_url: https://www.widerplanet.com
+    signals:
+      hosts: [widerplanet.com]
+
+  - id: rtbhouse
+    name: RTB House
+    vendor_url: https://www.rtbhouse.com
+    signals:
+      hosts: [creativecdn.com, rtbhouse.com]
+
+  - id: moloco
+    name: Moloco Ads
+    vendor_url: https://www.moloco.com
+    note: >
+      리테일 미디어 이벤트 호스트에 광고주 슬러그가 남는다 —
+      samplemarket-evt.rmp-api.moloco.com 식.
+    signals:
+      hosts: [moloco.com]
+
+  - id: igaworks_ssp
+    name: IGAWorks SSP (igaw.io)
+    note: adbrix(attribution)와 별개인 IGAWorks 광고 트래픽.
+    signals:
+      hosts: [igaw.io]
+
+  - id: karrot_ads
+    name: Karrot Ads (당근 광고)
+    signals:
+      hosts: [collect.daangn.com, business.daangn.com, karrot-dsp-conversion-event.daangn.com]
+
+  - id: microsoft_ads
+    name: Microsoft Advertising (UET)
+    signals:
+      hosts: [bat.bing.com]
+
+  - id: linkedin_insight
+    name: LinkedIn Insight Tag
+    signals:
+      hosts: [snap.licdn.com, px.ads.linkedin.com, ads.linkedin.com]
+
+  - id: reddit_pixel
+    name: Reddit Pixel
+    signals:
+      hosts: [ads.reddit.com]
+    weak_signals:
+      hosts: [redditstatic.com]
+
+  - id: kakao_adfit
+    name: Kakao AdFit / Moment
+    note: kakao_pixel(전환)과 별개의 카카오 광고 서빙·측정.
+    signals:
+      hosts: [adfit.kakao.com, ad.daum.net]
+
+  - id: mezzomedia
+    name: MezzoMedia (mman.kr)
+    note: 도메인 소유는 확실, 제품명 매핑은 중간 확신 — 검증되면 갱신.
+    signals:
+      hosts: [mman.kr]
+
+  - id: buzzvil
+    name: Buzzvil
+    vendor_url: https://www.buzzvil.com
+    signals:
+      hosts: [buzzvil.com]
+
+  - id: across_adn
+    name: Across ADN (아크로스)
+    note: 스크립트는 rainbownine.net(레인보우나인)에서 서빙된다 — across_adn_*.js.
+    signals:
+      hosts: [acrosspf.com, rainbownine.net]
+
+  - id: adobe_advertising
+    name: Adobe Advertising Cloud
+    signals:
+      hosts: [everesttech.net]

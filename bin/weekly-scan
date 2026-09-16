@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Unattended run. Scans the watchlist, writes a digest, keeps a log.
+# Extra arguments go straight to `radar batch` — the nightly timer passes
+# `--due` so each tier is scanned on its own cadence.
+#
+# Failures are recorded rather than retried: a site that is blocked this week
+# is a fact the history needs, and a retry loop would only turn one bot wall
+# into several.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The workspace holds the data; the code may live anywhere (a source checkout,
+# a pip install). RADAR_HOME names it; default to this checkout for the
+# source-tree case.
+HOME_DIR="${RADAR_HOME:-$ROOT}"
+export RADAR_HOME="$HOME_DIR"
+LOGS="$HOME_DIR/data/logs"
+# Before anything else: on a fresh workspace data/ does not exist yet, and
+# the lock file two lines down has to live somewhere.
+mkdir -p "$LOGS"
+
+# One run at a time. The weekly job takes minutes and a hand-run `radar batch`
+# is a documented thing to do; two concurrent batches would put eight
+# Chromium instances on the machine and both would be writing the same
+# database. If a run is already going, this one steps aside.
+exec 9>"$HOME_DIR/data/.weekly.lock"
+if ! flock -n 9; then
+  echo "$(date -Iseconds) another run is in progress; skipping" >> "$LOGS/weekly-skipped.log"
+  exit 0
+fi
+STAMP="$(date +%Y-%m-%d)"
+
+{
+  echo "=== weekly run $STAMP ==="
+  "${RADAR_BIN:-$ROOT/bin/radar}" batch --note "scheduled $STAMP" "$@"
+  batch_status=$?
+  echo "--- digest ---"
+  "${RADAR_BIN:-$ROOT/bin/radar}" digest -o "$LOGS/digest-$STAMP.md"
+  echo "=== batch exit $batch_status ==="
+} >> "$LOGS/weekly-$STAMP.log" 2>&1
+
+# Prune logs older than a year; the database keeps the real history.
+find "$LOGS" -name 'weekly-*.log' -mtime +365 -delete 2>/dev/null
+find "$LOGS" -name 'digest-*.md' -mtime +365 -delete 2>/dev/null

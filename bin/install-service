@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Install the radar as systemd *user* services on this machine.
+#
+# Three units: the dashboard, a worker that drains scans queued from the
+# dashboard, and a daily timer that runs `weekly-scan --due` so each tier is
+# scanned on its own cadence. Everything runs as the current user; nothing
+# needs root. Survives logout only if lingering is on:
+#   loginctl enable-linger "$USER"
+#
+# The workspace (radar.toml, targets.yaml, data/) defaults to this checkout,
+# so one folder holds code, config, data, backups and the venv. Point
+# RADAR_HOME elsewhere only if you deliberately keep data apart.
+#
+# Usage: [RADAR_HOME=dir] [RADAR_TZ=Asia/Seoul] bin/install-service [--port 8848]
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOME_DIR="$(cd "${RADAR_HOME:-$ROOT}" && pwd)"
+PORT=8848
+TZ_NAME="${RADAR_TZ:-Asia/Seoul}"
+[[ "${1:-}" == "--port" ]] && PORT="$2"
+
+UNITS="$HOME/.config/systemd/user"
+mkdir -p "$UNITS" "$HOME_DIR/data/logs"
+
+cat > "$UNITS/radar-dashboard.service" <<UNIT
+[Unit]
+Description=MarTech Radar dashboard (127.0.0.1:$PORT)
+After=network.target
+
+[Service]
+Environment=RADAR_HOME=$HOME_DIR
+ExecStart=$ROOT/bin/radar serve --host 127.0.0.1 --port $PORT
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+UNIT
+
+cat > "$UNITS/radar-worker.service" <<UNIT
+[Unit]
+Description=MarTech Radar worker (runs scans queued from the dashboard)
+After=network-online.target
+
+[Service]
+Environment=RADAR_HOME=$HOME_DIR
+ExecStart=$ROOT/bin/radar worker --watch --name $(hostname -s)
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+UNIT
+
+cat > "$UNITS/radar-scan.service" <<UNIT
+[Unit]
+Description=MarTech Radar scheduled scan (tiers that are due)
+
+[Service]
+Type=oneshot
+Environment=RADAR_HOME=$HOME_DIR
+# Log and digest files are stamped with the local date; keep that on the
+# same clock as the timer, or a 03:00 run lands in yesterday's file.
+Environment=TZ=$TZ_NAME
+ExecStart=$ROOT/bin/weekly-scan --due
+UNIT
+
+cat > "$UNITS/radar-scan.timer" <<UNIT
+[Unit]
+Description=Run the radar scan every night
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 $TZ_NAME
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+cat > "$UNITS/radar-backup.service" <<UNIT
+[Unit]
+Description=MarTech Radar database snapshot
+
+[Service]
+Type=oneshot
+Environment=RADAR_HOME=$HOME_DIR
+Environment=TZ=$TZ_NAME
+ExecStart=$ROOT/bin/radar backup --keep 14
+UNIT
+
+cat > "$UNITS/radar-backup.timer" <<UNIT
+[Unit]
+Description=Snapshot the radar database before the nightly scan
+
+[Timer]
+OnCalendar=*-*-* 02:45:00 $TZ_NAME
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl --user daemon-reload
+systemctl --user enable --now radar-dashboard.service radar-worker.service \
+  radar-scan.timer radar-backup.timer
+echo "installed. dashboard: http://127.0.0.1:$PORT   workspace: $HOME_DIR"
+echo "  status:  bin/radarctl status      logs: bin/radarctl logs worker"
+echo "  check:   bin/radarctl doctor"

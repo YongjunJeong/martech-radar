@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Dynamic SDK page</title>
+  <meta name="generator" content="TestHarness 1.0">
+</head>
+<body>
+  <h1>SDK injected from body</h1>
+  <script>
+    // Injected at runtime, from <body>, after the parser has moved on.
+    var s = document.createElement('script');
+    s.src = '/static/fake-sdk.js';
+    document.body.appendChild(s);
+    var t = document.createElement('script');
+    t.src = '/static/tagmanager.js?id=GTM-TEST123';
+    document.body.appendChild(t);
+  </script>
+</body>
+</html>

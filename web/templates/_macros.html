@@ -1,0 +1,14 @@
+{% macro state_chip(state) %}
+  {% if state %}<span class="chip s-{{ state|lower }}">{{ state_label.get(state, state) }}</span>{% endif %}
+{% endmacro %}
+
+{% macro coverage_chip(row) %}
+  {% if row.judged %}<span class="chip ok">{{ t('companies.chip.judged') }}</span>
+  {% else %}<span class="chip warn">{{ t('companies.chip.unjudged', status=status_label.get(row.last_status, row.last_status or t('status.unscanned'))) }}</span>{% endif %}
+{% endmacro %}
+
+{% macro company_link(id, name) %}<a class="co" href="/companies/{{ id }}">{{ name }}</a>{% endmacro %}
+
+{% macro bar(value, total) %}
+  <span class="bar"><span style="width: {{ (100 * value / total) if total else 0 }}%"></span></span>
+{% endmacro %}

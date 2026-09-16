@@ -1,0 +1,207 @@
+# Customer engagement / personalisation platforms.
+# All vendors use the same evidence layers and detection thresholds.
+category: engagement
+fingerprints:
+  - id: insider
+    name: Insider
+    vendor_url: https://useinsider.com
+    note: >
+      The partner slug can appear in two places - the CDN subdomain
+      (<partner>.api.useinsider.com) and the versioned global
+      __INSIDER_SCRIPT_VERSION_<partner>__ - so a hit also tells us the
+      account name, not just the vendor.
+    signals:
+      hosts: [useinsider.com, insidercdn.com]
+      window: ["Insider", "re:^__INSIDER_SCRIPT_VERSION_"]
+      storage: ["re:^INSIDER_"]
+      scripts: ["useinsider.com/ins.js"]
+    weak_signals:
+      tokens: ["insider_object", "re:^__INSIDER_SCRIPT_VERSION_"]
+
+  - id: braze
+    name: Braze
+    vendor_url: https://braze.com
+    note: Legacy Appboy naming still ships in the SDK bundle.
+    signals:
+      hosts:
+        [braze.com, braze.eu, appboycdn.com, appboy.com, braze-images.com, iad-01.braze.com]
+      window: ["braze", "appboy", "AppBoy"]
+      storage: ["re:^ab\\.storage\\.", "re:^ab\\.optOut", "re:^appboy"]
+    weak_signals:
+      tokens: ["brazeBridge", "appboy"]
+
+  - id: bloomreach
+    name: Bloomreach Engagement (Exponea)
+    vendor_url: https://bloomreach.com
+    signals:
+      hosts: [exponea.com, bloomreach.com, bloomreachapps.com, exponea.eu, api.exponea.com]
+      window: ["exponea", "__exponea__"]
+      storage: ["__exponea_etc__", "__exponea_time_offset__", "re:^__exponea"]
+
+  - id: moengage
+    name: MoEngage
+    vendor_url: https://moengage.com
+    signals:
+      hosts: [moengage.com, moengage.in, cdn.moengage.com]
+      window: ["Moengage", "moengage"]
+      storage: ["MOE_DATA", "re:^MOE_", "re:^moe_"]
+    weak_signals:
+      window: ["moe"]
+
+  - id: clevertap
+    name: CleverTap
+    vendor_url: https://clevertap.com
+    signals:
+      hosts: [clevertap.com, wzrkt.com, clevertap-prod.com]
+      window: ["clevertap", "CleverTap"]
+      storage: ["re:^WZRK_", "WZRK_G", "WZRK_S"]
+
+  - id: salesforce_marketing_cloud
+    name: Salesforce Marketing Cloud
+    vendor_url: https://salesforce.com
+    note: >
+      Covers ExactTarget collect.js, Personalization (formerly Interaction
+      Studio / Evergage) and the Marketing Cloud REST hosts.
+    signals:
+      hosts:
+        [evgnet.com, exacttarget.com, marketingcloudapis.com, evergage.com, exct.net, sfmc-content.com]
+      window: ["_etmc", "ExactTarget", "Evergage", "_evga"]
+    weak_signals:
+      scripts: ["re:/collect\\.js(\\?|$)"]
+
+  - id: adobe_target
+    name: Adobe Target
+    vendor_url: https://business.adobe.com
+    note: >
+      Target and Analytics share omtrdc.net, so the host pattern is pinned to
+      the Target delivery subdomain rather than the whole domain.
+    signals:
+      hosts: ["re:\\.tt\\.omtrdc\\.net$"]
+      window: ["adobe.target", "mboxCreate", "targetGlobalSettings"]
+    weak_signals:
+      scripts: ["re:/at\\.js(\\?|$)"]
+      window: ["mbox"]
+
+  - id: emarsys
+    name: SAP Emarsys
+    vendor_url: https://emarsys.com
+    signals:
+      hosts: [emarsys.net, emarsys.com, scarabresearch.com]
+      window: ["ScarabQueue", "Scarab"]
+
+  - id: dynamic_yield
+    name: Dynamic Yield
+    vendor_url: https://dynamicyield.com
+    signals:
+      hosts: [dynamicyield.com, dy-api.com, dy-api.eu, dynamicyield.eu]
+      window: ["DYO", "DYDefaultContext"]
+      storage: ["re:^_dy", "_dyid", "_dycst"]
+    weak_signals:
+      window: ["DY"]
+
+  - id: airship
+    name: Airship
+    vendor_url: https://airship.com
+    signals:
+      hosts: [urbanairship.com, airship.com, aswpsdkus.com, aswpsdkeu.com]
+      window: ["UrbanAirship", "AirshipSDK"]
+
+  - id: onesignal
+    name: OneSignal
+    vendor_url: https://onesignal.com
+    signals:
+      hosts: [onesignal.com, os.tc]
+      window: ["OneSignal", "OneSignalDeferred"]
+      storage: ["re:^onesignal", "ONE_SIGNAL_SDK_DB"]
+
+  - id: iterable
+    name: Iterable
+    vendor_url: https://iterable.com
+    signals:
+      hosts: [iterable.com, links.iterable.com]
+      window: ["_iterableAnalytics", "IterableSDK"]
+
+  - id: klaviyo
+    name: Klaviyo
+    vendor_url: https://klaviyo.com
+    signals:
+      hosts: [klaviyo.com]
+      window: ["klaviyo", "_learnq", "KlaviyoSubscribe"]
+      storage: ["re:^__kla_"]
+
+  - id: appier
+    name: Appier (AIQUA / AIXON)
+    vendor_url: https://appier.com
+    signals:
+      hosts: [appier.net, appier.com, aiqua.appier.com, aiqua.io, appiersig.com, adsappier.com, quantumgraph.com]
+      window: ["qGraph", "appier", "AIQUA"]
+
+  - id: dable
+    name: Dable
+    vendor_url: https://dable.io
+    note: Korean content-recommendation widget, frequent on media and retail.
+    signals:
+      hosts: [dable.io, dable.co.kr]
+      window: ["dable"]
+
+  - id: groobee
+    name: Groobee
+    vendor_url: https://groobee.net
+    note: Korean personalisation and onsite-marketing tool.
+    signals:
+      hosts: [groobee.net, groobee.co.kr, groobee.io]
+      window: ["groobee", "Groobee"]
+
+  - id: recopick
+    name: RecoPick
+    vendor_url: https://recopick.com
+    signals:
+      hosts: [recopick.com, recopick.net]
+      window: ["recopick"]
+
+
+  - id: datarize
+    name: Datarize
+    vendor_url: https://www.datarize.ai
+    note: 커머스 개인화·CRM. datarize.io는 수집, datarize.ai는 에셋.
+    signals:
+      hosts: [datarize.io, datarize.ai]
+
+  - id: bigin
+    name: Bigin CRM
+    vendor_url: https://bigin.io
+    signals:
+      hosts: [bigin.io]
+
+  - id: flarelane
+    name: FlareLane
+    vendor_url: https://flarelane.com
+    note: 웹/앱 푸시 메시징.
+    signals:
+      hosts: [flarelane.com]
+
+  - id: shoplive
+    name: Shoplive
+    vendor_url: https://shoplive.cloud
+    note: 라이브커머스 위젯 — engagement 채널로 취급.
+    signals:
+      hosts: [shoplive.cloud]
+
+  - id: eigene
+    name: EIGENE
+    note: 추천/개인화 (api.dsoc.eigene.io 수집 엔드포인트).
+    signals:
+      hosts: [eigene.io]
+
+  - id: keepgrow
+    name: Keepgrow
+    signals:
+      hosts: [keepgrow.com]
+
+  - id: hubspot
+    name: HubSpot
+    vendor_url: https://hubspot.com
+    signals:
+      hosts: [hs-scripts.com, hs-analytics.net, hs-banner.com, hsforms.com, hubspot.com]
+      window: ["_hsq", "HubSpotConversations"]
+      storage: ["hubspotutk", "re:^__hs"]

@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Operate this radar deployment from one place: services, logs, scans,
+# updates, backups and a health check. `radar` is for the data; this is for
+# the server it runs on.
+#
+#   bin/radarctl status              what is running, when the next scan is, last run
+#   bin/radarctl logs [scan|worker|dashboard]
+#   bin/radarctl scan [--due|--tier P1|--only id ...]   scan now, then a digest
+#   bin/radarctl restart|stop|start  the dashboard and worker
+#   bin/radarctl update              git pull, pinned deps, tests, restart, doctor
+#   bin/radarctl venv                rebuild .venv (after moving the folder, say)
+#   bin/radarctl backup [--keep N]   snapshot the database now
+#   bin/radarctl doctor              check everything; exit 1 if something is wrong
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+export RADAR_HOME="${RADAR_HOME:-$ROOT}"
+RADAR="$ROOT/bin/radar"
+PY="$ROOT/.venv/bin/python"
+PORT="$(grep -o 'port [0-9]*' "$HOME/.config/systemd/user/radar-dashboard.service" 2>/dev/null | awk '{print $2}')"
+PORT="${PORT:-8848}"
+SERVICES=(radar-dashboard radar-worker)
+TIMERS=(radar-scan.timer radar-backup.timer)
+
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+fail() { printf '  \033[31m✗\033[0m %s\n' "$*"; PROBLEMS=$((PROBLEMS + 1)); }
+PROBLEMS=0
+
+unit_state() { systemctl --user is-active "$1" 2>/dev/null || true; }
+
+cmd_status() {
+  say "workspace  $RADAR_HOME"
+  for u in "${SERVICES[@]}" "${TIMERS[@]}"; do
+    printf '  %-20s %s\n' "$u" "$(unit_state "$u")"
+  done
+  say
+  systemctl --user list-timers --no-pager 2>/dev/null | grep -E 'radar-(scan|backup)' \
+    | awk '{printf "  next %-14s %s %s %s\n", $NF, $1, $2, $3}'
+  say
+  say "last runs"
+  "$RADAR" runs 2>/dev/null | head -4 | sed 's/^/  /'
+  say
+  if curl -fs "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+    n="$("$RADAR" signals --json 2>/dev/null | jq 'length' 2>/dev/null || echo '?')"
+    say "dashboard  http://127.0.0.1:$PORT   open signals: $n"
+  else
+    say "dashboard  not answering on :$PORT"
+  fi
+}
+
+cmd_logs() {
+  case "${1:-scan}" in
+    scan)
+      latest="$(ls -t "$RADAR_HOME"/data/logs/weekly-*.log 2>/dev/null | head -1)"
+      [[ -n "$latest" ]] || { say "no scan log yet"; exit 1; }
+      say "$latest"; tail -n 40 -f "$latest" ;;
+    worker|dashboard) journalctl --user -u "radar-$1" -f ;;
+    backup) journalctl --user -u radar-backup --no-pager -n 30 ;;
+    *) say "logs: scan | worker | dashboard | backup"; exit 2 ;;
+  esac
+}
+
+cmd_scan() {
+  # weekly-scan holds the lock and writes the log; follow it so the terminal
+  # shows progress and comes back when it ends.
+  "$ROOT/bin/weekly-scan" "$@" &
+  pid=$!
+  sleep 1
+  latest="$(ls -t "$RADAR_HOME"/data/logs/weekly-*.log 2>/dev/null | head -1)"
+  [[ -n "$latest" ]] && tail -n +1 -f --pid="$pid" "$latest"
+  wait "$pid"
+}
+
+cmd_restart() { systemctl --user restart "${SERVICES[@]}"; cmd_status; }
+cmd_stop()    { systemctl --user stop "${SERVICES[@]}" "${TIMERS[@]}"; cmd_status; }
+cmd_start()   { systemctl --user start "${SERVICES[@]}" "${TIMERS[@]}"; cmd_status; }
+
+cmd_venv() {
+  say "rebuilding .venv"
+  rm -rf "$ROOT/.venv"
+  python3 -m venv "$ROOT/.venv"
+  "$PY" -m pip install -q --upgrade pip
+  "$PY" -m pip install -q -r requirements.lock -e ".[dev]"
+  "$PY" -m playwright install chromium
+  ok "venv ready"
+}
+
+cmd_update() {
+  if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    say "pulling"; git -C "$ROOT" pull --ff-only || { fail "git pull failed"; exit 1; }
+  fi
+  if ! venv_matches; then cmd_venv; fi
+  say "installing pinned dependencies"
+  "$PY" -m pip install -q -r requirements.lock -e ".[dev]" || { fail "pip install failed"; exit 1; }
+  say "running tests"
+  "$PY" -m pytest tests/ -q -x 2>&1 | tail -2
+  [[ ${PIPESTATUS[0]} -eq 0 ]] || { fail "tests failed — services NOT restarted"; exit 1; }
+  systemctl --user restart "${SERVICES[@]}"
+  ok "services restarted"
+  cmd_doctor
+}
+
+cmd_backup() { "$RADAR" backup "$@"; }
+
+venv_matches() {
+  # Console scripts hard-code the interpreter path; a moved folder leaves
+  # them pointing at the old place while `python` itself still works.
+  [[ -x "$PY" ]] || return 1
+  local shebang; shebang="$(head -1 "$ROOT/.venv/bin/pip" 2>/dev/null)"
+  [[ "$shebang" == "#!$ROOT/.venv/bin/python"* ]]
+}
+
+cmd_doctor() {
+  say "workspace"
+  for f in radar.toml targets.yaml data/radar.db; do
+    [[ -e "$RADAR_HOME/$f" ]] && ok "$f" || fail "$f missing"
+  done
+  say "environment"
+  if venv_matches; then ok ".venv paths match this folder"; else fail ".venv points elsewhere — run: bin/radarctl venv"; fi
+  "$PY" -c "import radar, web" 2>/dev/null && ok "package imports" || fail "package does not import"
+  if ls "$HOME/.cache/ms-playwright"/chromium-* >/dev/null 2>&1; then ok "chromium installed"; else fail "chromium missing — run: $PY -m playwright install chromium"; fi
+  say "services"
+  for u in "${SERVICES[@]}" "${TIMERS[@]}"; do
+    st="$(unit_state "$u")"; [[ "$st" == "active" ]] && ok "$u" || fail "$u is $st"
+  done
+  health="$(curl -fs "http://127.0.0.1:$PORT/health" 2>/dev/null || true)"
+  if [[ -z "$health" ]]; then fail "dashboard not answering on :$PORT"
+  elif [[ "$health" == *"$RADAR_HOME/data/radar.db"* ]]; then ok "dashboard serves this workspace"
+  else fail "dashboard serves a different workspace: $health"; fi
+  say "data"
+  last="$("$RADAR" runs 2>/dev/null | sed -n 2p | awk '{print $2}')"
+  if [[ -n "$last" ]]; then
+    age=$(( ( $(date +%s) - $(date -d "${last%%T*}" +%s) ) / 86400 ))
+    (( age <= 8 )) && ok "last run $last (${age}d ago)" || warn "last run $last (${age}d ago) — has the timer been firing?"
+  else warn "no runs yet"; fi
+  snap="$(ls -t "$RADAR_HOME"/backups/radar-*.db 2>/dev/null | head -1)"
+  if [[ -n "$snap" ]]; then
+    sage=$(( ( $(date +%s) - $(stat -c %Y "$snap") ) / 3600 ))
+    (( sage <= 48 )) && ok "latest backup $(basename "$snap") (${sage}h ago)" || warn "latest backup is ${sage}h old"
+  else warn "no backup yet — run: bin/radarctl backup"; fi
+  avail="$(df -BM --output=avail "$ROOT" | tail -1 | tr -dc '0-9')"
+  (( avail > 1024 )) && ok "disk ${avail}M free" || fail "disk low: ${avail}M free"
+  say
+  if (( PROBLEMS == 0 )); then say "all good"; else say "$PROBLEMS problem(s)"; exit 1; fi
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  status|logs|scan|restart|stop|start|update|venv|backup|doctor) "cmd_$cmd" "$@" ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

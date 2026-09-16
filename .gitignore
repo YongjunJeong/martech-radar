@@ -1,0 +1,36 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Your watchlist, your database, your scans. None of it belongs in a public repo.
+targets.yaml
+data/
+backups/
+
+# Holds the access token once you set one.
+radar.toml
+
+# Build output from `pip install -e .`
+*.egg-info/
+
+# Local credentials, exports and generated artifacts.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.log
+*.mp4
+*.webm
+.DS_Store
+build/
+dist/
+# Workspace-specific fingerprints can encode private observations.
+/fingerprints/

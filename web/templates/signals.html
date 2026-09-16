@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "_macros.html" import company_link %}
+{% block content %}
+<h1>{{ t('signals.title') }}</h1>
+
+<nav class="seg">
+  <a class="{{ 'on' if not kind }}" href="/signals">{{ t('common.all') }}</a>
+  {% for k, count in counts|dictsort(by='value', reverse=true) %}
+    {% if count %}
+      <a class="{{ 'on' if kind == k }}" href="/signals?kind={{ k }}">
+        {{ kind_label.get(k, k) }} <b>{{ count }}</b>
+      </a>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<ol class="signal-list">
+{% for s in signals %}
+  <li class="signal p{{ s.priority }}">
+    <div class="sig-head">
+      <span class="kind k-{{ s.kind|lower }}">{{ kind_label.get(s.kind, s.kind) }}</span>
+      <span class="muted">{{ industries.get(s.industry, s.industry) }}</span>
+    </div>
+    <h3 class="sig-co">{{ company_link(s.target_id, s.company) }}</h3>
+    <p class="headline">{{ s.headline }}</p>
+    {% if not s.maturity %}<p class="detail">{{ s.detail }}</p>{% endif %}
+    {% if s.maturity %}
+      <p class="maturity">
+        {{ t('signals.maturity', total=s.maturity.total,
+              advertising=s.maturity.advertising, analytics=s.maturity.analytics) }}
+        {%- if s.maturity.attribution %}{{ t('signals.maturity.attribution', n=s.maturity.attribution) }}{% endif %}
+        {%- if s.maturity.experimentation %}{{ t('signals.maturity.experimentation', n=s.maturity.experimentation) }}{% endif %}
+        {{- t('signals.maturity.score', score=s.maturity.score) }}
+      </p>
+    {% endif %}
+    {% for c in s.changes %}
+      <p class="detail muted">
+        {{ t('signals.change_detail', name=c.name, since=c.since_run,
+              streak=c.run_streak, judged=c.judged_runs) }}
+      </p>
+    {% endfor %}
+    <div class="ack-row">
+      {% if s.ack == 'ACKED' %}<span class="chip">{{ t('ack.acked') }}</span>{% endif %}
+      {% if s.ack == 'DISMISSED' %}<span class="chip">{{ t('ack.dismissed') }}</span>{% endif %}
+      <form method="post" action="/signals/ack">
+        <input type="hidden" name="key" value="{{ s.key }}">
+        {% if not s.ack %}
+          <button name="state" value="ACKED">{{ t('ack.ack') }}</button>
+          <button name="state" value="DISMISSED" class="ghost">{{ t('ack.dismiss') }}</button>
+        {% else %}
+          <button name="state" value="" class="ghost">{{ t('ack.clear') }}</button>
+        {% endif %}
+      </form>
+    </div>
+  </li>
+{% else %}
+  <li class="empty">{{ t('signals.empty') }}</li>
+{% endfor %}
+</ol>
+
+{% if dismissed_count and not show_dismissed %}
+  <p class="note"><a href="?{{ 'kind=' ~ kind ~ '&' if kind }}dismissed=1">
+    {{ t('ack.dismissed_count', n=dismissed_count) }}</a></p>
+{% elif show_dismissed %}
+  <p class="note"><a href="?{{ 'kind=' ~ kind if kind }}">{{ t('ack.hide_dismissed') }}</a></p>
+{% endif %}
+
+{% if quiet %}
+<h2>{{ t('signals.quiet.title') }}</h2>
+<p class="note">{{ t('signals.quiet.note') }}</p>
+<ul class="inline">
+  {% for q in quiet %}
+    <li>{{ company_link(q.target_id, q.company) }} <span class="muted">{{ t('signals.quiet.score', score=q.maturity.score) }}</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if unjudged %}
+<h2>{{ t('signals.unjudged.title') }}</h2>
+<p class="note">{{ t('signals.unjudged.note')|safe }}</p>
+<ul class="inline">
+  {% for c in unjudged[:40] %}
+    <li>{{ company_link(c.id, c.company) }}
+      <span class="muted">{{ status_label.get(c.last_status, c.last_status or t('status.unscanned')) }}</span></li>
+  {% endfor %}
+  {% if unjudged|length > 40 %}
+    <li><a href="/companies?state=unjudged">{{ t('common.and_more', n=unjudged|length - 40) }}</a></li>
+  {% endif %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ v.name }} — Deal Radar{% endblock %}
+{% block content %}
+<h1>{{ v.name }}</h1>
+<p class="lede">
+  <a href="/vendors?category={{ v.category }}">{{ category_label.get(v.category, v.category) }}</a>
+  · {{ t('vendor.detected_in', n=v.count) }}
+  {% if fingerprint.vendor_url %} · <a class="url" href="{{ fingerprint.vendor_url }}" target="_blank" rel="noreferrer noopener">{{ fingerprint.vendor_url }}</a>{% endif %}
+</p>
+{% if fingerprint.note %}<p class="note">{{ fingerprint.note }}</p>{% endif %}
+
+<h2>{{ t('vendor.users') }}</h2>
+<table>
+  <thead><tr><th>{{ t('common.company') }}</th><th>{{ t('common.industry') }}</th>
+    <th class="n">{{ t('common.score') }}</th><th>{{ t('common.evidence_layers') }}</th></tr></thead>
+  <tbody>
+  {% for c in v.companies %}
+    <tr>
+      <td><a href="/companies/{{ c.id }}">{{ c.company }}</a></td>
+      <td class="muted">{{ c.industry_label }}</td>
+      <td class="n">{{ c.score }}</td>
+      <td class="muted">{{ c.layers }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="empty">{{ t('vendor.none') }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>{{ t('vendor.fingerprint') }}</h2>
+<table>
+  <thead><tr><th>{{ t('common.layer') }}</th><th>{{ t('common.strength') }}</th>
+    <th>{{ t('common.pattern') }}</th></tr></thead>
+  <tbody>
+  {% for s in fingerprint.signals %}
+    <tr class="{{ 'muted' if s.strength == 'weak' }}">
+      <td>{{ s.field }}</td><td>{{ s.strength }}</td><td><code>{{ s.pattern }}</code></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

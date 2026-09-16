@@ -1,0 +1,244 @@
+<title>MarTech Radar 사용법</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<style>
+:root{--ground:#f6f7f9;--surface:#fff;--surface-2:#eef1f5;--ink:#12171d;--ink-2:#31404e;--muted:#5d6b7a;--line:#dde3ea;--line-2:#c8d2dd;--accent:#0b6e99;--accent-soft:#e3f0f6;--ok:#1a7f4b;--ok-soft:#e6f4ec;--warn:#8a5d00;--warn-soft:#fbf1dc;--crit:#b0301c;--crit-soft:#fbe9e5;--sans:"IBM Plex Sans KR",-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;--serif:"IBM Plex Serif",Georgia,serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ground:#0d1217;--surface:#141b22;--surface-2:#1b242d;--ink:#e3e9ef;--ink-2:#c2cdd8;--muted:#8b9aab;--line:#232d38;--line-2:#33414f;--accent:#4bb4dc;--accent-soft:#102c39;--ok:#5cc78d;--ok-soft:#10281c;--warn:#d9a441;--warn-soft:#2b2213;--crit:#e8705c;--crit-soft:#2e1815}}
+:root[data-theme="dark"]{--ground:#0d1217;--surface:#141b22;--surface-2:#1b242d;--ink:#e3e9ef;--ink-2:#c2cdd8;--muted:#8b9aab;--line:#232d38;--line-2:#33414f;--accent:#4bb4dc;--accent-soft:#102c39;--ok:#5cc78d;--ok-soft:#10281c;--warn:#d9a441;--warn-soft:#2b2213;--crit:#e8705c;--crit-soft:#2e1815}
+*{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.75}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+code,kbd{font-family:var(--mono);font-size:.86em;background:var(--surface-2);padding:.12em .38em;border-radius:3px;color:var(--ink-2)}
+.wrap{display:grid;grid-template-columns:230px minmax(0,1fr);gap:52px;max-width:1120px;margin:0 auto;padding:0 32px}
+.rail{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;padding:44px 0;border-right:1px solid var(--line)}
+.rail .mark{font-family:var(--serif);font-size:19px;font-weight:600;display:block;color:var(--ink);margin-bottom:4px}.rail .mark em{font-style:italic;color:var(--accent)}
+.rail .ver{font-family:var(--mono);font-size:11px;color:var(--muted);display:block;margin-bottom:26px;letter-spacing:.04em}
+.rail ol{list-style:none;margin:0;padding:0}.rail li>a{display:flex;gap:10px;padding:5px 12px 5px 0;font-size:13.5px;color:var(--muted);line-height:1.45}.rail li>a:hover{color:var(--ink);text-decoration:none}.rail .n{font-family:var(--mono);font-size:11px;color:var(--line-2);flex:none;padding-top:2px}
+main{padding:44px 0 120px;max-width:72ch}
+.masthead{border-bottom:2px solid var(--ink);padding-bottom:24px;margin-bottom:10px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 14px}
+h1{font-family:var(--serif);font-weight:600;font-size:clamp(32px,4.4vw,46px);line-height:1.1;letter-spacing:-1px;margin:0 0 16px;text-wrap:balance}
+.standfirst{font-size:18px;line-height:1.66;color:var(--ink-2);margin:0;font-weight:300;text-wrap:pretty}
+section{padding-top:52px;scroll-margin-top:24px}
+.sec-label{display:flex;align-items:baseline;gap:12px;margin:0 0 6px}.sec-label .n{font-family:var(--mono);font-size:11.5px;color:var(--accent);letter-spacing:.1em}.sec-label .rule{flex:1;height:1px;background:var(--line)}
+h2{font-size:25px;font-weight:600;letter-spacing:-.4px;margin:0 0 18px;line-height:1.28;text-wrap:balance}
+h3{font-size:17px;font-weight:600;margin:34px 0 10px;letter-spacing:-.2px}
+p{margin:0 0 16px}ul,ol.body{margin:0 0 16px;padding-left:1.25em}li{margin:0 0 7px}strong{font-weight:600}
+.lead{font-size:17px;color:var(--ink-2);font-weight:300;line-height:1.68}
+.note{border-left:2px solid var(--accent);background:var(--accent-soft);padding:15px 20px;margin:22px 0;border-radius:0 4px 4px 0}.note .tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);display:block;margin-bottom:6px}.note p:last-child{margin-bottom:0}
+.warnbox{border-left-color:var(--warn);background:var(--warn-soft)}.warnbox .tag{color:var(--warn)}.critbox{border-left-color:var(--crit);background:var(--crit-soft)}.critbox .tag{color:var(--crit)}
+.term{background:var(--surface);border:1px solid var(--line);border-radius:5px;overflow-x:auto;margin:18px 0}.term pre{margin:0;padding:15px 18px;font-family:var(--mono);font-size:13px;line-height:1.7;color:var(--ink-2)}.term .g{color:var(--ok)}.term .d{color:var(--muted)}.term .y{color:var(--warn)}.term .r{color:var(--crit)}
+.tw{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:5px;background:var(--surface)}table{border-collapse:collapse;width:100%;font-size:14px}
+th{text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.6}tr:last-child td{border-bottom:0}td code{background:none;padding:0;color:var(--accent)}
+.chip{font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:2px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap;display:inline-block}.chip.ok{color:var(--ok);border-color:var(--ok);background:var(--ok-soft)}.chip.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-soft)}.chip.crit{color:var(--crit);border-color:var(--crit);background:var(--crit-soft)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:18px 0}.steps>li{counter-increment:s;display:grid;grid-template-columns:34px 1fr;gap:14px;padding:12px 0;border-bottom:1px solid var(--line)}.steps>li:last-child{border-bottom:0}.steps>li::before{content:counter(s);font-family:var(--mono);font-size:13px;font-weight:600;color:var(--accent);background:var(--accent-soft);width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-top:2px}.steps>li p{margin:0 0 6px}.steps .term{margin:8px 0 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 20px;margin:16px 0;font-size:14.5px}.kv dt{font-family:var(--mono);font-size:12.5px;color:var(--muted);padding-top:2px}.kv dd{margin:0;color:var(--ink-2)}
+.tree{font-family:var(--mono);font-size:13px;line-height:1.7;background:var(--surface);border:1px solid var(--line);border-radius:5px;padding:14px 18px;margin:16px 0;color:var(--ink-2);white-space:pre;overflow-x:auto}.tree b{color:var(--ink);font-weight:600}.tree i{color:var(--muted);font-style:normal}
+footer{border-top:1px solid var(--line);margin-top:72px;padding-top:22px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:0;padding:0 22px}.rail{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:26px 0 18px}.rail ol{display:flex;flex-wrap:wrap;gap:2px 16px}main{padding-top:30px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+<div class="wrap">
+<nav class="rail">
+  <a class="mark" href="#top">MarTech <em>Radar</em></a><span class="ver">사용법 · v0.1</span>
+  <ol>
+    <li><a href="#glance"><span class="n">01</span>한눈에</a></li>
+    <li><a href="#install"><span class="n">02</span>설치</a></li>
+    <li><a href="#workspace"><span class="n">03</span>워크스페이스</a></li>
+    <li><a href="#first"><span class="n">04</span>첫 스캔까지</a></li>
+    <li><a href="#dashboard"><span class="n">05</span>대시보드</a></li>
+    <li><a href="#weekly"><span class="n">06</span>매주 돌리기</a></li>
+    <li><a href="#server"><span class="n">07</span>서버와 워커</a></li>
+    <li><a href="#move"><span class="n">08</span>옮기기·백업</a></li>
+    <li><a href="#read"><span class="n">09</span>결과 읽는 법</a></li>
+    <li><a href="#faq"><span class="n">10</span>자주 묻는 것</a></li>
+    <li><a href="#cmds"><span class="n">11</span>명령 전체</a></li>
+  </ol>
+</nav>
+<main id="top">
+<header class="masthead">
+  <p class="eyebrow">MarTech Radar · 사용 설명서</p>
+  <h1>설치부터 첫 신호까지</h1>
+  <p class="standfirst">관심 있는 회사들의 공개 웹사이트를 매주 실제 브라우저로 방문해, 어떤 마케팅 솔루션이 <strong>실제로 돌고 있는지</strong> 기록하고, <strong>무엇이 바뀌었는지</strong>를 영업 신호로 알려주는 도구입니다. 서버도 데이터베이스 서버도 필요 없습니다 — 폴더 하나면 됩니다.</p>
+</header>
+
+<section id="glance"><div class="sec-label"><span class="n">01</span><span class="rule"></span></div><h2>한눈에</h2>
+<p class="lead">세 문장으로 요약하면 이렇습니다.</p>
+<ol class="body">
+<li><strong>회사 목록</strong>(워치리스트)을 넣으면, 도구가 각 회사 사이트를 실제 Chromium으로 열어 9가지 층에서 증거를 모읍니다.</li>
+<li>모은 증거를 벤더 지문에 대조해 <strong>확정 / 추정 / 미검출</strong>을 매기고, 판정 근거를 함께 저장합니다.</li>
+<li>매주 반복하면서 <strong>지난주와 달라진 것</strong> — 새로 들어온 솔루션, 빠진 솔루션, A→B 교체, 아무것도 안 쓰는 회사 — 를 신호로 뽑아줍니다.</li>
+</ol>
+<div class="note"><span class="tag">이 도구가 묻는 질문</span><p>"이 사이트가 무엇을 쓰는가"가 아닙니다. <strong>"이번 주에 어떤 회사가 영업하기에 더 흥미로워졌는가, 그리고 왜?"</strong>입니다. 그래서 한 번 조회가 아니라 매주 관측이고, 판정 하나하나가 근거를 달고 다닙니다.</p></div>
+<p>벤더 중립입니다. 특정 솔루션 회사 소속이 아니어도 그대로 쓸 수 있고, 소속이라면 설정 한 줄로 "우리 것이 빠졌다"를 따로 알려 받을 수 있습니다. LLM은 쓰지 않습니다 — 같은 증거는 언제나 같은 판정입니다.</p>
+</section>
+
+<section id="install"><div class="sec-label"><span class="n">02</span><span class="rule"></span></div><h2>설치</h2>
+<dl class="kv"><dt>필요한 것</dt><dd>Python 3.11 이상 · 디스크 약 200MB(브라우저 포함) · 인터넷</dd><dt>되는 OS</dt><dd>Linux · macOS · Windows (Windows는 <code>radar.exe</code>로 실행; 코드에 OS 분기가 없습니다)</dd><dt>필요 없는 것</dt><dd>Docker · DB 서버 · 클라우드 계정 · API 키</dd></dl>
+<ol class="steps">
+<li><p>저장소를 받고 가상환경에 설치합니다.</p><div class="term"><pre>git clone &lt;저장소 주소&gt; martech-radar
+cd martech-radar
+python3 -m venv .venv
+.venv/bin/pip install -e .          <span class="d"># Windows: .venv\Scripts\pip install -e .</span></pre></div></li>
+<li><p>브라우저를 한 번 내려받습니다. (Playwright가 관리하는 Chromium, 약 170MB)</p><div class="term"><pre>.venv/bin/playwright install chromium</pre></div></li>
+<li><p>설치가 됐는지 확인합니다. 아무 폴더에서나 됩니다.</p><div class="term"><pre>.venv/bin/radar home
+<span class="d">/home/you  (cwd)
+  · radar.toml
+  · targets.yaml
+  · data/radar.db
+  · fingerprints  (using the shipped set)</span></pre></div><p>점(·)은 "아직 없음"입니다. 다음 절에서 만듭니다.</p></li>
+</ol>
+<div class="note"><span class="tag">팁</span><p>매번 <code>.venv/bin/radar</code>라고 치기 번거로우면 <code>.venv/bin</code>을 PATH에 넣거나 가상환경을 활성화하세요. 이 문서는 이후 그냥 <code>radar</code>로 씁니다.</p></div>
+</section>
+
+<section id="workspace"><div class="sec-label"><span class="n">03</span><span class="rule"></span></div><h2>워크스페이스 — 내 것이 전부 들어 있는 폴더</h2>
+<p class="lead">설치한 코드와 <strong>내 데이터</strong>는 다른 곳에 삽니다. 코드는 가상환경 안에, 데이터는 <strong>워크스페이스</strong>라는 폴더 하나에.</p>
+<div class="tree">&lt;워크스페이스&gt;/
+  <b>radar.toml</b>        <i>설정 — 언어, 지역, 접근 토큰</i>
+  <b>targets.yaml</b>      <i>워치리스트 씨앗 (실제 목록은 DB에 삽니다)</i>
+  <b>data/radar.db</b>     <i>모든 스캔·증거·판정·대기열 — 이 배포의 기억 전부</i>
+  data/logs/         <i>주간 요약</i>
+  fingerprints/      <i>(선택) 기본 지문을 덮어쓰고 싶을 때만</i></div>
+<p>이 폴더 밖에는 아무 상태도 없습니다. 그래서 <strong>옮기는 것도, 백업하는 것도, 한 컴퓨터에서 두 배포를 돌리는 것도 전부 "폴더"</strong> 단위입니다(§08).</p>
+<h3>도구가 워크스페이스를 찾는 순서</h3>
+<ol class="body"><li><code>radar --home DIR …</code> 로 직접 지정</li><li>환경변수 <code>RADAR_HOME</code></li><li>그것도 없으면 <strong>지금 있는 폴더</strong></li></ol>
+<p><code>radar home</code>이 언제나 "지금 어느 폴더를 쓰고 있는지"를 보여줍니다. <strong>데이터가 비어 보이면 가장 먼저 이 명령을 치세요</strong> — 십중팔구 다른 폴더를 보고 있는 겁니다.</p>
+</section>
+
+<section id="first"><div class="sec-label"><span class="n">04</span><span class="rule"></span></div><h2>첫 스캔까지 — 10분</h2>
+<ol class="steps">
+<li><p>워크스페이스 폴더를 만들고 들어갑니다. 이름과 위치는 자유입니다.</p><div class="term"><pre>mkdir ~/radar-home &amp;&amp; cd ~/radar-home</pre></div></li>
+<li><p>예시 파일 두 개를 복사합니다.</p><div class="term"><pre>cp /path/to/martech-radar/targets.example.yaml targets.yaml
+cp /path/to/martech-radar/radar.example.toml   radar.toml</pre></div></li>
+<li><p><code>radar.toml</code>을 엽니다. 한국에서 쓰신다면 세 줄만 바꿉니다.</p><div class="term"><pre>[scan]
+locale = <span class="g">"ko-KR"</span>          <span class="d"># 사이트는 지역마다 다른 태그를 내립니다</span>
+timezone = <span class="g">"Asia/Seoul"</span>
+
+[ui]
+language = <span class="g">"ko"</span></pre></div><p>나머지는 기본값으로 두셔도 됩니다. 특히 <code>respect_robots = true</code>는 그대로 두세요 — 사이트가 "들어오지 마라"고 한 곳은 건너뜁니다(§10).</p></li>
+<li><p><code>targets.yaml</code>을 엽니다. 업종을 먼저 선언하고, 회사를 적습니다.</p><div class="term"><pre>industries:
+  retail:  { label: 리테일·이커머스 }
+  travel:  { label: 여행·숙박 }
+
+targets:
+  - id: shop_a              <span class="d"># 이력의 열쇠. 한 번 정하면 바꾸지 마세요</span>
+    company: A 쇼핑몰
+    industry: retail        <span class="d"># 위에 선언한 코드만 됩니다</span>
+    urls:
+      - https://shop.example/
+      - https://shop.example/product/1   <span class="d"># 상세페이지도 같이 — 거기서만 뜨는 SDK가 있습니다</span></pre></div></li>
+<li><p>목록을 DB에 넣고, 첫 스캔을 돌립니다. URL 하나에 10초 안팎입니다.</p><div class="term"><pre>radar watchlist import targets.yaml
+<span class="d">imported 3 new, 0 updated, 2 industries</span>
+
+radar batch
+<span class="d">run 1: 3 targets, 4 urls, concurrency 3
+  [1/4] shop_a         OK           15D/ 2P  https://shop.example/
+  [2/4] shop_a         OK           12D/ 1P  https://shop.example/product/1
+  ...</span></pre></div><p><code>15D/ 2P</code>는 확정 15개, 추정 2개입니다. <code>OK</code>가 아닌 상태(차단됨·시간초과 등)는 §09에서 설명합니다.</p></li>
+<li><p>대시보드를 엽니다.</p><div class="term"><pre>radar serve
+<span class="d">dashboard on http://127.0.0.1:8848  (no token — local only)</span></pre></div><p>브라우저로 <a href="http://127.0.0.1:8848">http://127.0.0.1:8848</a> 에 들어갑니다.</p></li>
+</ol>
+<div class="note"><span class="tag">이제부터 YAML은 안 써도 됩니다</span><p>목록은 DB에 살고, <strong>대시보드의 "관리" 페이지</strong>에서 회사를 추가·수정·일시중지하고 스캔을 예약할 수 있습니다. 파일로 다시 꺼내고 싶으면 <code>radar watchlist export -o 파일.yaml</code>.</p></div>
+</section>
+
+<section id="dashboard"><div class="sec-label"><span class="n">05</span><span class="rule"></span></div><h2>대시보드 — 여섯 페이지</h2>
+<div class="tw"><table><thead><tr><th>페이지</th><th>무엇을 보나</th></tr></thead><tbody>
+<tr><td><strong>개요</strong></td><td>업종별로 누가 engagement 플랫폼을 쓰고, 누가 안 쓰고, 누구는 판정을 못 했는지. 벤더 점유율.</td></tr>
+<tr><td><strong>신호함</strong></td><td>이번 주에 바뀐 것, 급한 순서로. 아래엔 "임계값 미달"과 "판정 불가" 목록도 — <strong>숨기지 않습니다.</strong></td></tr>
+<tr><td><strong>기업</strong></td><td>워치리스트 전체. 업종·상태로 거릅니다.</td></tr>
+<tr><td><strong>기업 상세</strong></td><td>현재 스택. <strong>판정 하나를 펼치면 그렇게 본 실제 증거</strong>(어느 층, 어떤 패턴, 실제로 본 문자열)가 나옵니다. 실행 타임라인도.</td></tr>
+<tr><td><strong>솔루션</strong></td><td>벤더별 점유 — 누가 무엇을 쓰는지 역추적.</td></tr>
+<tr><td><strong>지문</strong></td><td>판정 규칙 열람. 패턴 하나를 <strong>저장된 모든 증거에 대조해 보는</strong> 시험 도구가 있습니다 — 지문을 추가하기 전에 남의 것에 걸리는지 미리 봅니다.</td></tr>
+<tr><td><strong>관리</strong></td><td>회사 추가·수정·일시중지, 업종 추가, 스캔 예약. 저장한 대로 다음 스캔에 반영됩니다.</td></tr>
+</tbody></table></div>
+<p>모든 판정에서 원본 증거까지 클릭 두 번이면 닿습니다. "그걸 어떻게 아느냐"는 질문에 페이지를 안 떠나고 답할 수 있게 만든 것이 이 대시보드의 목적입니다.</p>
+</section>
+
+<section id="weekly"><div class="sec-label"><span class="n">06</span><span class="rule"></span></div><h2>매주 돌리기</h2>
+<p>변화를 보려면 같은 일을 같은 방식으로 반복해야 합니다. 손으로 하면 두 가지입니다:</p>
+<div class="term"><pre>radar batch          <span class="d"># 전체 스캔 (또는 대시보드 "전체 스캔 예약")</span>
+radar digest         <span class="d"># 이번 주 한 장 요약 — 변화·공략 가능·미달·판정불가</span></pre></div>
+<p>자동으로 돌리고 싶으면 <code>bin/weekly-scan</code>이 스캔 → 요약 파일 저장 → 오래된 로그 정리를 한 번에 합니다. 동시에 두 개가 돌지 않도록 잠금도 잡습니다.</p>
+<div class="term"><pre><span class="d"># Linux/macOS, 매주 월요일 07:00</span>
+crontab -e
+0 7 * * 1 RADAR_HOME=/home/you/radar-home /path/to/martech-radar/bin/weekly-scan</pre></div>
+<p>Windows는 작업 스케줄러에 같은 명령을 등록합니다. 요약은 <code>&lt;워크스페이스&gt;/data/logs/digest-날짜.md</code>에 쌓입니다.</p>
+<div class="note warnbox"><span class="tag">이탈 판정은 2주가 걸립니다</span><p>한 번 안 보인 벤더는 <strong>이탈 후보</strong>일 뿐이고, 연속 두 번 안 보여야 <strong>이탈 확정</strong>입니다. 첫 주엔 "후보"만 나옵니다 — 정상입니다. 서두르라고 만든 도구가 아닙니다.</p></div>
+</section>
+
+<section id="server"><div class="sec-label"><span class="n">07</span><span class="rule"></span></div><h2>대시보드와 워커 실행</h2>
+<p>대시보드는 스캔을 예약하고 워커가 실행합니다. 같은 컴퓨터의 로컬 워크스페이스를 사용하세요. SQLite DB를 네트워크 드라이브나 동기화 폴더로 공유하는 구성은 권장하지 않습니다.</p>
+<div class="term"><pre>radar --home /path/to/workspace serve
+radar --home /path/to/workspace worker --watch</pre></div>
+<p>서버에서 실행한다면 기본 localhost 바인딩을 유지하고 SSH 터널로 접속하세요. 접근 토큰만으로 브라우저의 네트워크 접근을 격리할 수는 없습니다.</p>
+</section>
+
+<section id="move"><div class="sec-label"><span class="n">08</span><span class="rule"></span></div><h2>옮기기 · 백업 · 여러 개 돌리기 — 전부 "폴더"</h2>
+<div class="tw"><table><thead><tr><th>하고 싶은 것</th><th>하는 법</th></tr></thead><tbody>
+<tr><td><strong>다른 컴퓨터로 이전</strong></td><td>워크스페이스 폴더를 복사 → 거기서 설치(§02) → <code>radar --home 그폴더 home</code>. 끝. 이력·판정·대기열 전부 따라갑니다.</td></tr>
+<tr><td><strong>백업</strong></td><td>폴더를 복사. 실행 중에는 <code>radar backup</code>을 사용하세요. 폴더를 직접 복사하려면 대시보드와 워커를 먼저 종료하세요.</td></tr>
+<tr><td><strong>배포 두 개</strong> (예: 한국 / 일본)</td><td>폴더 두 개. <code>radar --home ~/kr-home …</code>, <code>radar --home ~/jp-home …</code>. 설정·목록·데이터가 서로 안 섞입니다.</td></tr>
+<tr><td><strong>코드 업데이트</strong></td><td><code>cd martech-radar &amp;&amp; git pull &amp;&amp; .venv/bin/pip install -e .</code>. 워크스페이스는 건드리지 않습니다. DB 스키마가 바뀌면 다음 실행 때 <strong>자동으로 제자리에서 올라갑니다</strong>(삭제 없음).</td></tr>
+<tr><td><strong>지문(판정 규칙) 업데이트 후</strong></td><td><code>radar redetect --diff</code> — 저장된 과거 스캔 전부를 새 규칙으로 다시 판정하고, <strong>무엇이 바뀌었는지</strong>를 줄마다 보여줍니다. 사이트는 재방문하지 않습니다.</td></tr>
+</tbody></table></div>
+<p>이게 가능한 이유는 한 가지입니다 — 워크스페이스 밖에 상태가 없고, 코드는 워크스페이스가 <em>어디</em>에 있는지 신경 쓰지 않기 때문입니다. 설정과 DB를 함께 옮기면 저장된 이력을 이어서 사용할 수 있습니다.</p>
+</section>
+
+<section id="read"><div class="sec-label"><span class="n">09</span><span class="rule"></span></div><h2>결과 읽는 법 — 헷갈리기 쉬운 것들</h2>
+<h3>스캔 상태</h3>
+<div class="tw"><table><thead><tr><th>상태</th><th>뜻</th><th>판정에 쓰나</th></tr></thead><tbody>
+<tr><td><span class="chip ok">OK</span></td><td>정상 관측</td><td><strong>예 — 유일하게</strong></td></tr>
+<tr><td><span class="chip crit">BLOCKED</span></td><td>봇 차단벽이 대신 응답</td><td>아니오</td></tr>
+<tr><td><span class="chip warn">SKIPPED_BY_ROBOTS</span></td><td>사이트의 robots.txt가 금지 — <strong>방문하지 않음</strong></td><td>아니오</td></tr>
+<tr><td><span class="chip crit">THIN</span></td><td>200으로 응답했지만 점검 안내 페이지</td><td>아니오</td></tr>
+<tr><td><span class="chip warn">PARTIAL</span></td><td>평소보다 훨씬 적게 로드됨 — 반쯤 열린 페이지</td><td>아니오</td></tr>
+<tr><td><span class="chip warn">TIMEOUT · NAV_FAILED</span></td><td>응답 없음 · 접속 실패</td><td>아니오</td></tr>
+</tbody></table></div>
+<p>판정에 안 쓰이는 상태는 <strong>이력에서 그 주가 없던 것처럼</strong> 취급됩니다. 그래서 차단된 주가 "벤더가 빠졌다"로 둔갑하지 않습니다. 이게 이 도구에서 가장 중요한 규칙입니다.</p>
+<h3>판정</h3>
+<div class="tw"><table><thead><tr><th>판정</th><th>뜻</th></tr></thead><tbody>
+<tr><td><span class="chip ok">DETECTED</span> 확정</td><td>브라우저가 그 벤더에 접속했거나 그 코드가 실행됐다 — <strong>직접 증거</strong></td></tr>
+<tr><td><span class="chip warn">PROBABLE</span> 추정</td><td>약한 직접 증거 하나뿐이거나, CSP 헤더·번들 안에 <em>이름만</em> 있다</td></tr>
+<tr><td>NOT_DETECTED 미검출</td><td><strong>"안 쓴다"가 아니라 "우리가 못 봤다"</strong>. 동의 배너 뒤, 로그인 뒤, 안 본 페이지에 있을 수 있습니다</td></tr>
+</tbody></table></div>
+<div class="note critbox"><span class="tag">고객 앞에서</span><p>"귀사는 CRM이 없으신 것으로 확인됩니다"라고 말하면 안 됩니다. 우리가 아는 건 <em>우리가 본 페이지에서 보이지 않았다</em>는 것뿐입니다. "확인되지 않았습니다"까지만.</p></div>
+<h3>신호</h3>
+<p>급한 순서입니다. <code>[vendor] home</code>을 설정하지 않으면 "자사" 신호는 나오지 않고 모든 벤더가 동등합니다.</p>
+<div class="tw"><table><tbody>
+<tr><td><code>HOME_MIGRATION</code></td><td>우리 제품이 빠지고 <strong>누가 들어왔는지</strong>까지 보인다 — 가장 급함</td></tr>
+<tr><td><code>HOME_REMOVAL</code></td><td>우리 제품이 빠졌고 후임은 아직 안 보임</td></tr>
+<tr><td><code>COMPETITOR_MIGRATION</code></td><td>경쟁사끼리 교체 — 진입 창</td></tr>
+<tr><td><code>COMPETITOR_REMOVAL</code></td><td>경쟁사 이탈, 후임 미확인</td></tr>
+<tr><td><code>GREENFIELD</code></td><td>광고·애널리틱스는 성숙한데 engagement 플랫폼이 없음 — 가장 좋은 입구</td></tr>
+<tr><td><code>COMPETITOR_NEW</code> / <code>HOME_NEW</code></td><td>신규 진입</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="faq"><div class="sec-label"><span class="n">10</span><span class="rule"></span></div><h2>자주 묻는 것</h2>
+<h3>데이터가 비어 있어요</h3><p><code>radar home</code>부터. 다른 폴더를 보고 있을 확률이 가장 높습니다. 맞는 폴더면 <code>radar watchlist list</code>로 목록이 있는지 확인하세요.</p>
+<h3>어떤 회사가 계속 SKIPPED_BY_ROBOTS예요</h3><p>그 사이트의 <code>robots.txt</code>가 일반 방문 봇을 금지한 겁니다. 꽤 흔합니다. 그래도 봐야 할 근거가 있으면 관리 페이지에서 그 회사만 <strong>예외</strong>로 두되 <strong>사유를 적어야</strong> 저장됩니다 — 나중에 누구든 왜 그랬는지 볼 수 있게요. 전역 스위치가 아니라 회사 단위 결정입니다.</p>
+<h3>어떤 회사는 벤더가 너무 적게 잡혀요</h3><p>금융·보험처럼 동의 배너 뒤에 태그를 묶는 사이트는 실제보다 얇게 보입니다. 이 도구는 배너를 클릭하지 않습니다(원칙). 상세페이지 URL을 추가하면 나아지는 경우가 많습니다.</p>
+<h3>새 벤더를 추가하고 싶어요</h3><p>① 대시보드 "지문"에서 후보 패턴을 저장된 증거 전체에 대조해 봅니다(남의 것에 걸리는지). ② <code>fingerprints/*.yaml</code>에 추가합니다 — 워크스페이스에 <code>fingerprints/</code> 폴더를 두면 기본 세트 대신 그걸 씁니다(복사 후 추가). ③ <code>radar redetect --diff</code>. 짧은 전역변수(<code>ab</code>, <code>hj</code>)나 파일명(<code>at.js</code>)은 <code>weak_signals</code>로 두거나 경로에 앵커를 거세요 — 오탐을 줄이기 위한 규칙입니다.</p>
+<h3>스캔이 느려요</h3><p>URL당 10초 안팎이 정상입니다(사이트가 다 뜨기를 기다립니다). <code>radar.toml</code>의 <code>concurrency</code>를 올리면 빨라지지만, 같은 사이트엔 1초 간격을 지킵니다. 실행 시간은 사이트와 장비에 따라 달라집니다.</p>
+<h3>Windows에서 bin/radar가 안 돼요</h3><p>그건 소스 체크아웃용 bash 스크립트입니다. Windows에서는 <code>.venv\Scripts\radar.exe</code>(설치된 콘솔 스크립트)를 쓰세요. 정직하게 말씀드리면, Windows 래퍼는 저희가 직접 실행해 보지 못했습니다 — 문제가 있으면 알려주세요.</p>
+</section>
+
+<section id="cmds"><div class="sec-label"><span class="n">11</span><span class="rule"></span></div><h2>명령 전체</h2>
+<p>모든 명령 앞에 <code>--home DIR</code>을 붙일 수 있습니다.</p>
+<div class="tw"><table><thead><tr><th>명령</th><th>하는 일</th></tr></thead><tbody>
+<tr><td><code>radar home</code></td><td>지금 쓰는 워크스페이스와 그 안에 뭐가 있는지</td></tr>
+<tr><td><code>radar watchlist import 파일</code></td><td>YAML → DB. <code>--replace</code>면 파일에 없는 회사는 일시중지(삭제 아님)</td></tr>
+<tr><td><code>radar watchlist export -o 파일</code> / <code>list</code></td><td>DB → YAML / 목록 보기</td></tr>
+<tr><td><code>radar batch</code></td><td>전체 스캔. <code>--only id</code> <code>--industry 코드</code> <code>--limit N</code></td></tr>
+<tr><td><code>radar worker --watch</code></td><td>대기열의 스캔을 이 컴퓨터에서 실행</td></tr>
+<tr><td><code>radar serve</code></td><td>대시보드. <code>--host</code> <code>--port</code> <code>--lang ko|en</code></td></tr>
+<tr><td><code>radar signals</code> / <code>digest</code></td><td>신호 목록 / 이번 주 한 장 요약 (<code>-o 파일</code>)</td></tr>
+<tr><td><code>radar stack id</code> / <code>changes id</code> / <code>brief id</code></td><td>한 회사의 스택 / 벤더별 변화 이력 / 인용 가능한 관측 사실</td></tr>
+<tr><td><code>radar scan URL</code></td><td>URL 하나만 즉시 관측 (워치리스트 밖도 가능, 사이트를 방문합니다)</td></tr>
+<tr><td><code>radar detect 파일.json --why</code></td><td>저장된 스캔 JSON을 재판정하고 근거 표시</td></tr>
+<tr><td><code>radar redetect --diff</code></td><td>DB의 모든 증거를 현재 지문으로 재판정 + 무엇이 바뀌었는지</td></tr>
+<tr><td><code>radar fingerprints</code> / <code>targets</code> / <code>runs</code></td><td>지문 목록·검증 / YAML 검증 / 실행 이력</td></tr>
+</tbody></table></div>
+</section>
+<footer>MarTech Radar · 사용 설명서 · 예시 출력은 사용법 설명용입니다</footer>
+</main></div>

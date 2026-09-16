@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "_macros.html" import company_link %}
+{% block content %}
+<h1>{{ t('companies.title', n=companies|length) }}</h1>
+
+<div class="toolbar">
+  <nav class="seg">
+    <a class="{{ 'on' if not state }}" href="/companies{{ '?industry=' ~ industry if industry }}">{{ t('common.all') }}</a>
+    <a class="{{ 'on' if state == 'engagement' }}" href="/companies?state=engagement{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.holders') }}</a>
+    <a class="{{ 'on' if state == 'greenfield' }}" href="/companies?state=greenfield{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.greenfield') }}</a>
+    <a class="{{ 'on' if state == 'moved' }}" href="/companies?state=moved{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.moved') }}</a>
+    <a class="{{ 'on' if state == 'unjudged' }}" href="/companies?state=unjudged{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.unjudged') }}</a>
+  </nav>
+  <form method="get" action="/companies" class="pick">
+    {% if state %}<input type="hidden" name="state" value="{{ state }}">{% endif %}
+    <select name="industry" onchange="this.form.submit()" aria-label="{{ t('common.industry') }}">
+      <option value="">{{ t('companies.pick_industry') }}</option>
+      {% for code, label in industries|dictsort(by='value') %}
+        <option value="{{ code }}" {{ 'selected' if industry == code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+<table>
+  <thead><tr>
+    <th>{{ t('common.company') }}</th><th>{{ t('common.industry') }}</th>
+    <th class="n">{{ t('common.vendors') }}</th>
+    <th>{{ t('category.engagement') }}</th><th>{{ t('common.change') }}</th>
+    <th>{{ t('common.state') }}</th>
+  </tr></thead>
+  <tbody>
+  {% for c in companies %}
+    <tr>
+      <td>{{ company_link(c.id, c.company) }}
+        {% if c.tier == 'enterprise' %}<span class="chip tier">ENT</span>{% endif %}</td>
+      <td class="muted">{{ c.industry_label }}</td>
+      <td class="n">{{ c.vendor_count if c.judged else '·' }}</td>
+      <td class="vendors">
+        {% if not c.judged %}<span class="muted">—</span>
+        {% elif c.off_domain %}
+          <span class="chip s-removed">{{ t('companies.chip.off_domain') }}</span>
+          <span class="muted url">{{ c.landing|join(', ') }}</span>
+        {% elif c.engagement %}
+          {% for e in c.engagement %}<a href="/vendors/{{ e.id }}">{{ e.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+        {% elif c.engagement_pending %}
+          {% for e in c.engagement_pending %}<a class="muted" href="/vendors/{{ e.id }}">{{ e.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+          <span class="chip s-removal_candidate">{{ state_label.get('REMOVAL_CANDIDATE') }}</span>
+        {% else %}<span class="hot">{{ t('companies.chip.greenfield') }}</span>{% endif %}
+      </td>
+      <td>{% for state, group in c.moved|groupby('state') %}<span class="chip s-{{ state|lower }}">{{ state_label.get(state, state) }}{% if group|length > 1 %} ×{{ group|length }}{% endif %}</span>{% endfor %}</td>
+      <td class="muted nowrap">
+        {% if c.judged %}{{ t('companies.chip.judged') }}
+        {% else %}{{ t('companies.chip.unjudged', status=status_label.get(c.last_status, c.last_status or t('status.unscanned'))) }}{% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">{{ t('companies.none') }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

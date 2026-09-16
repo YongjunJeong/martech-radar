@@ -1,0 +1,150 @@
+# Analytics, product analytics and session replay.
+# Not competitors - maturity signals. An account running GA4 only is a very
+# different conversation from one running Amplitude plus a CDP.
+category: analytics
+fingerprints:
+  - id: google_tag_manager
+    name: Google Tag Manager
+    signals:
+      hosts: [googletagmanager.com, tagmanager.google.com]
+      window: ["google_tag_manager"]
+    weak_signals:
+      window: ["dataLayer"]
+      scripts: ["re:/gtm\\.js(\\?|$)"]
+
+  - id: google_analytics
+    name: Google Analytics
+    note: Covers GA4 and residual Universal Analytics traffic.
+    signals:
+      hosts: [google-analytics.com, analytics.google.com]
+      window: ["GoogleAnalyticsObject", "google_tag_data", "gaGlobal"]
+      storage: ["re:^_ga", "re:^__utm"]
+    weak_signals:
+      window: ["gtag", "ga"]
+
+  - id: adobe_analytics
+    name: Adobe Analytics
+    signals:
+      hosts: [omtrdc.net, demdex.net, "2o7.net"]
+      window: ["AppMeasurement", "s_gi", "_satellite"]
+      storage: ["re:^s_cc$", "re:^AMCV_", "demdex"]
+    weak_signals:
+      window: ["adobe"]
+
+  - id: adobe_launch
+    name: Adobe Experience Platform Launch / DTM
+    signals:
+      hosts: [adobedtm.com, assets.adobedtm.com]
+      window: ["_satellite"]
+
+  - id: amplitude
+    name: Amplitude
+    signals:
+      hosts: [amplitude.com, api.amplitude.com, api2.amplitude.com, cdn.amplitude.com]
+      window: ["amplitude"]
+      storage: ["re:^amplitude"]
+    weak_signals:
+      storage: ["re:^AMP_"]
+
+  - id: mixpanel
+    name: Mixpanel
+    signals:
+      hosts: [mixpanel.com, api-js.mixpanel.com, cdn.mxpnl.com, mxpnl.com]
+      window: ["mixpanel"]
+      storage: ["re:^mp_"]
+
+  - id: hotjar
+    name: Hotjar
+    signals:
+      hosts: [hotjar.com, hotjar.io, static.hotjar.com]
+      window: ["hjBootstrap", "_hjSettings"]
+      storage: ["re:^_hj"]
+    weak_signals:
+      window: ["hj"]
+
+  - id: microsoft_clarity
+    name: Microsoft Clarity
+    signals:
+      hosts: [clarity.ms]
+      window: ["clarity"]
+      storage: ["_clck", "_clsk"]
+
+  - id: naver_analytics
+    name: Naver Analytics
+    note: The wcs global is the Naver common web-log tag; near-universal on Korean retail.
+    signals:
+      hosts: [wcs.naver.net, wcs.naver.com]
+      window: ["wcs_add", "wcs_do"]
+    weak_signals:
+      window: ["wcs"]
+
+  - id: beusable
+    name: Beusable
+    note: Korean heatmap / UX analytics.
+    signals:
+      hosts: [beusable.net, script.beusable.net]
+      window: ["BeusableScript", "_beusable"]
+
+  - id: segment
+    name: Twilio Segment
+    signals:
+      hosts: [segment.com, segment.io, cdn.segment.com]
+      window: ["__SEGMENT__"]
+      storage: ["ajs_anonymous_id", "ajs_user_id"]
+    weak_signals:
+      window: ["analytics"]
+
+  - id: mparticle
+    name: mParticle
+    signals:
+      hosts: [mparticle.com, jssdkcdns.mparticle.com]
+      window: ["mParticle"]
+
+  - id: tealium
+    name: Tealium
+    signals:
+      hosts: [tiqcdn.com, tealiumiq.com]
+      window: ["utag", "utag_data"]
+
+  - id: datadog_rum
+    name: Datadog RUM
+    signals:
+      hosts: [datadoghq-browser-agent.com, browser-intake-datadoghq.com, datadoghq.com]
+      window: ["DD_RUM", "DD_LOGS"]
+
+  - id: sentry
+    name: Sentry
+    signals:
+      hosts: [sentry.io, ingest.sentry.io, browser.sentry-cdn.com]
+      window: ["__SENTRY__", "Sentry"]
+
+  - id: medallia
+    name: Medallia
+    signals:
+      hosts: [medallia.com, medallia.eu, nebula-cdn.kampyle.com, kampyle.com]
+      window: ["KAMPYLE_ONSITE_SDK"]
+
+  - id: contentsquare
+    name: Contentsquare
+    signals:
+      hosts: [contentsquare.net, contentsquare.com]
+      window: ["_uxa", "CS_CONF"]
+
+
+  - id: acecounter
+    name: ACE Counter
+    vendor_url: https://www.acecounter.com
+    signals:
+      hosts: [acecounter.com]
+
+  - id: bizspring
+    name: BizSpring Logger
+    vendor_url: https://www.bizspring.co.kr
+    signals:
+      hosts: [bizspring.net, logger.co.kr]
+
+  - id: ifdo
+    name: IFDO
+    note: NHN커머스 계열 분석/마케팅 자동화.
+    signals:
+      hosts: [ifdo.co.kr]

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ t('task.title', id=task.id, kind=task_kind_label.get(task.kind, task.kind)) }}{% endblock %}
+{% block content %}
+<h1>{{ t('task.title', id=task.id, kind=task_kind_label.get(task.kind, task.kind)) }}
+  <span class="chip {{ 'hot' if task.state == 'failed' else ('s-new' if task.state == 'running') }}">{{ task_state_label.get(task.state, task.state) }}</span></h1>
+<p class="lede">
+  {{ t('task.requested', at=task.requested_at[:16].replace('T',' '), by=task.requested_by or '·') }}
+  {% if task.claimed_by %} · {{ task.claimed_by }}{% endif %}
+  {% if task.params %} · <code>{{ task.params }}</code>{% endif %}
+</p>
+
+{% if task.state in ('pending', 'running') %}
+  <p class="note" id="waiting">{{ t('task.waiting') }}</p>
+{% endif %}
+{% if task.error %}<p class="empty warn">{{ task.error }}</p>{% endif %}
+
+<h2>{{ t('task.output') }}</h2>
+{% if task.output %}<pre class="out">{{ task.output }}</pre>
+{% else %}<p class="empty">{{ t('task.no_output') }}</p>{% endif %}
+
+{% if task.state in ('pending', 'running') %}
+<script>
+(function () {
+  const tick = async () => {
+    try {
+      const r = await fetch('/api/tasks/{{ task.id }}');
+      const p = await r.json();
+      if (p.state === 'done' || p.state === 'failed') { location.reload(); return; }
+    } catch (e) { /* dashboard restarting; try again */ }
+    setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 3000);
+})();
+</script>
+{% endif %}
+{% endblock %}

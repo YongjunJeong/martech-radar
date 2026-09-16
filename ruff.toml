@@ -1,0 +1,11 @@
+# Keep it to what catches real mistakes: unused imports and names, undefined
+# references, and the obvious bug patterns. Style nits are left alone.
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = ["E", "F", "B", "UP", "SIM"]
+ignore = ["E501"]   # long lines are allowed where a comment or a query reads better unbroken
+
+[lint.per-file-ignores]
+"tests/*" = ["B011", "SIM117"]

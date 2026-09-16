@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>Lazy SDK page</title></head>
+<body>
+  <div style="height:4000px">Scroll to wake the SDK</div>
+  <script>
+    // Only loads once the visitor actually scrolls — the exact case a
+    // load-and-leave scanner reports as NOT_DETECTED.
+    var loaded = false;
+    window.addEventListener('scroll', function () {
+      if (loaded) return;
+      loaded = true;
+      var s = document.createElement('script');
+      s.src = '/static/fake-sdk.js';
+      document.body.appendChild(s);
+    }, { passive: true });
+  </script>
+</body>
+</html>

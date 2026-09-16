@@ -1,0 +1,56 @@
+# Mobile / cross-channel attribution. On a web scan these show up as the
+# web-to-app deferred-deeplink SDK, which is a reliable tell that the
+# account runs an app business alongside the site.
+category: attribution
+fingerprints:
+  - id: appsflyer
+    name: AppsFlyer
+    signals:
+      hosts: [appsflyer.com, onelink.me, appsflyersdk.com]
+      window: ["AF_SMART_SCRIPT"]
+      storage: ["afUserId"]
+    weak_signals:
+      window: ["AF"]
+      storage: ["re:^af_"]
+
+  - id: adbrix
+    name: adbrix (Dfinery)
+    note: IGAWorks' attribution product, dominant in the Korean app market.
+    signals:
+      hosts: [adbrix.io, dfinery.io, igaworks.com]
+      window: ["AdBrix", "adbrix"]
+
+  - id: airbridge
+    name: Airbridge
+    signals:
+      hosts: [airbridge.io, abr.ge, ab180.co]
+      window: ["airbridge"]
+
+  - id: branch
+    name: Branch
+    signals:
+      hosts: [branch.io, app.link, bnc.lt]
+    weak_signals:
+      window: ["branch"]
+
+  - id: adjust
+    name: Adjust
+    signals:
+      hosts: [adjust.com, adj.st, adjust.io]
+      window: ["Adjust", "adjustSDK"]
+
+  - id: singular
+    name: Singular
+    signals:
+      hosts: [singular.net, sng.link]
+      window: ["singularSdk"]
+
+  # Moved from engagement (2026-09): Wisetracker is app/web attribution.
+  # Companies whose only "engagement" hit was this one were miscounted as
+  # having a platform — which fed greenfield judgements and tiering.
+  - id: wisetracker
+    name: Wisetracker
+    vendor_url: https://wisetracker.co.kr
+    signals:
+      hosts: [wisetracker.co.kr, wisetracker.com]
+      window: ["wiseTracker", "wtStat"]

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t('fp.title') }}</h1>
+<p class="lede">{{ t('fp.lede') }}</p>
+
+<section class="tryout">
+  <h2>{{ t('fp.try') }}</h2>
+  <p class="note">{{ t('fp.try_hint') }}</p>
+  <form method="get" action="/fingerprints" class="inline-form">
+    <select name="field">
+      {% for f in fields %}
+        <option value="{{ f }}" {{ 'selected' if field == f }}>{{ f }}</option>
+      {% endfor %}
+    </select>
+    <input name="pattern" value="{{ pattern }}" placeholder="braze.com  ·  re:^ab\.storage\." >
+    <button type="submit">{{ t('fp.try_run') }}</button>
+  </form>
+
+  {% if trial %}
+    {% if trial.error %}
+      <p class="empty warn">{{ trial.error }}</p>
+    {% elif trial.hits %}
+      <p class="counts">{{ t('fp.try_result', hits=trial.hits|length, scanned=trial.scanned) }}</p>
+      <table>
+        <thead><tr><th>{{ t('common.company') }}</th><th>{{ t('common.layer') }}</th>
+          <th>{{ t('common.observed') }}</th></tr></thead>
+        <tbody>
+        {% for h in trial.hits %}
+          <tr><td class="url">{{ h.host }}</td>
+            <td><span class="chip {{ 'ok' if h.layer in ('network','runtime','storage','dom','console') else 'warn' }}">{{ h.layer }}</span></td>
+            <td><code>{{ h.value }}</code></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="note">{{ t('fp.try_check') }}</p>
+    {% else %}
+      <p class="empty">{{ t('fp.try_none', scanned=trial.scanned) }}</p>
+    {% endif %}
+  {% endif %}
+</section>
+
+<h2>{{ t('fp.registry') }}</h2>
+<form method="get" action="/fingerprints" class="inline-form">
+  <input name="q" value="{{ q }}" placeholder="{{ t('fp.search') }}">
+  <button type="submit">{{ t('fp.search_run') }}</button>
+</form>
+
+{% for cat, rows in fingerprints %}
+  <h3 class="cat">{{ category_label.get(cat, cat) }}</h3>
+  {% for fp in rows %}
+    <details class="vendor">
+      <summary>
+        <a class="v-name" href="/vendors/{{ fp.id }}">{{ fp.name }}</a>
+        <span class="muted mono">{{ fp.id }}</span>
+        <span class="muted">{{ t('fp.signal_count', n=fp.signals|length) }}</span>
+      </summary>
+      <div class="evidence">
+        {% if fp.note %}<p class="note">{{ fp.note }}</p>{% endif %}
+        <table class="ev">
+          <thead><tr><th>{{ t('common.layer') }}</th><th>{{ t('common.strength') }}</th>
+            <th>{{ t('common.pattern') }}</th><th></th></tr></thead>
+          <tbody>
+          {% for sg in fp.signals %}
+            <tr class="{{ 'indirect' if sg.strength == 'weak' }}">
+              <td>{{ sg.field }}</td><td>{{ sg.strength }}</td>
+              <td><code>{{ sg.pattern }}</code></td>
+              <td><a class="pill sm" href="/fingerprints?field={{ sg.field }}&pattern={{ sg.pattern|urlencode }}">{{ t('fp.try_this') }}</a></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  {% endfor %}
+{% endfor %}
+
+<p class="note">{{ t('fp.edit_where') }}</p>
+{% endblock %}

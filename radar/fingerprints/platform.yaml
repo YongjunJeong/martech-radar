@@ -1,0 +1,141 @@
+# Commerce platform, consent, support and CDN/monitoring. These tell us how
+# much freedom the account has to install anything at all: a locked-down
+# hosted mall is a different integration story from a self-run stack.
+category: platform
+fingerprints:
+  - id: cafe24
+    name: Cafe24
+    signals:
+      hosts: [cafe24.com, cafe24img.com, cafe24api.com, poxo.com, cafe24data.com]
+    weak_signals:
+      window: ["CAFE24", "cafe24"]
+
+  - id: makeshop
+    name: MakeShop
+    signals:
+      hosts: [makeshop.co.kr, makeshop.com]
+
+  - id: nhn_commerce
+    name: NHN Commerce (Godomall)
+    signals:
+      hosts: [godo.co.kr, godomall.com, nhn-commerce.com, cdn-nhncommerce.com, e-ncp.com]
+
+  - id: shopify
+    name: Shopify
+    signals:
+      hosts: [cdn.shopify.com, myshopify.com, shopifycdn.com]
+      window: ["Shopify", "ShopifyAnalytics"]
+
+  - id: salesforce_commerce_cloud
+    name: Salesforce Commerce Cloud
+    signals:
+      hosts: [demandware.net, demandware.edgesuite.net]
+
+  - id: sap_hybris
+    name: SAP Commerce (Hybris)
+    weak_signals:
+      dom: ["data-hybris", "data-smartedit-component-id"]
+      hosts: [hybris.com]
+
+  - id: onetrust
+    name: OneTrust
+    signals:
+      hosts: [onetrust.com, cookielaw.org, otsdk.com]
+      window: ["OneTrust", "OptanonWrapper", "Optanon"]
+      storage: ["OptanonConsent", "OptanonAlertBoxClosed"]
+
+  - id: cookiebot
+    name: Cookiebot
+    signals:
+      hosts: [cookiebot.com, consent.cookiebot.com]
+      window: ["Cookiebot"]
+    weak_signals:
+      window: ["CookieConsent"]
+
+  - id: channel_talk
+    name: Channel Talk
+    note: Korean chat/CRM; near-ubiquitous on D2C and mid-market retail.
+    signals:
+      hosts: [channel.io, channelio.io, channeltalk.io]
+      window: ["ChannelIO", "ChannelIOInitialized"]
+      storage: ["re:^ch-veil-id"]
+    weak_signals:
+      storage: ["re:^channel"]
+
+  - id: zendesk
+    name: Zendesk
+    signals:
+      hosts: [zendesk.com, zdassets.com, zopim.com]
+      window: ["zE", "zEmbed", "$zopim"]
+
+  - id: intercom
+    name: Intercom
+    signals:
+      hosts: [intercom.io, intercomcdn.com, intercom.com]
+      window: ["Intercom", "intercomSettings"]
+
+  - id: happytalk
+    name: Happytalk
+    signals:
+      hosts: [happytalk.io, happytalkio.com]
+      window: ["happytalk"]
+
+  - id: crema
+    name: Crema
+    note: Korean review/UGC solution.
+    signals:
+      hosts: ["cre.ma", crema.co.kr]
+      window: ["crema"]
+
+  - id: cloudflare
+    name: Cloudflare
+    signals:
+      hosts: [cloudflareinsights.com, challenges.cloudflare.com]
+    weak_signals:
+      hosts: [cdnjs.cloudflare.com]
+
+  - id: akamai_mpulse
+    name: Akamai mPulse
+    signals:
+      hosts: [go-mpulse.net, akstat.io]
+      window: ["BOOMR", "BOOMR_mq"]
+
+  - id: naver_cloud
+    name: Naver Cloud Platform
+    weak_signals:
+      hosts: [ncloud.com, pstatic.net, naverusercontent.com, naverncp.com]
+
+  - id: nhn_toast
+    name: NHN Cloud (Toast)
+    weak_signals:
+      hosts: [toast.com, toastoven.net]
+
+
+  - id: onetag_enliple
+    name: Enliple OneTag / DataManager
+    note: >
+      엔라이플 태그 컨테이너(cdn.onetag.co.kr/0/tcs.js) + 데이터매니저 CDP.
+      tune720.com도 엔라이플 도메인.
+    signals:
+      hosts: [onetag.co.kr, datamanager.co.kr, tune720.com]
+
+  - id: newrelic
+    name: New Relic Browser
+    signals:
+      hosts: [newrelic.com, nr-data.net]
+
+  - id: whatap
+    name: WhaTap RUM
+    vendor_url: https://www.whatap.io
+    signals:
+      hosts: [whatap-browser-agent.io, whatap.io]
+
+  - id: jennifersoft
+    name: JENNIFER (제니퍼소프트)
+    signals:
+      hosts: [jennifersoft.com]
+
+  - id: queue_it
+    name: Queue-it
+    signals:
+      hosts: [queue-it.net]

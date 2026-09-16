@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ t('common.run') }} {{ progress.run_id }}{% endblock %}
+{% block content %}
+<h1>{{ t('common.run') }} {{ progress.run_id }}</h1>
+<p class="lede">
+  {{ progress.started_at[:16].replace('T',' ') if progress.started_at }}
+  {% if progress.note %} · {{ progress.note }}{% endif %}
+</p>
+
+<div class="progress" id="progress"
+     data-run="{{ progress.run_id }}" data-complete="{{ 1 if progress.complete else 0 }}">
+  <div class="bar-lg"><span id="bar" style="width: {{ (100 * (progress.done + progress.failed) / progress.total)|round|int if progress.total else 0 }}%"></span></div>
+  <p class="counts" id="counts">
+    {{ t('run.counts', done=progress.done, total=progress.total,
+          pending=progress.pending, running=progress.claimed, failed=progress.failed) }}
+  </p>
+</div>
+
+{% if progress.pending and not progress.claimed %}
+<div class="note">
+  <span class="tag">{{ t('run.waiting') }}</span>
+  <p>{{ t('run.worker_hint') }}</p>
+  <pre class="cmd">./bin/radar worker --run {{ progress.run_id }}</pre>
+</div>
+{% endif %}
+
+<table>
+  <thead><tr>
+    <th>{{ t('common.company') }}</th><th>URL</th>
+    <th>{{ t('common.state') }}</th><th>{{ t('common.note') }}</th>
+  </tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td><a href="/companies/{{ j.target_id }}">{{ j.company or j.target_id }}</a></td>
+      <td class="url">{{ j.url }}</td>
+      <td><span class="chip {{ 'ok' if j.state == 'done' else ('warn' if j.state in ('pending','claimed') else 'hot') }}">{{ t('job.' ~ j.state) }}</span></td>
+      <td class="muted">{{ j.error or (j.claimed_by if j.state == 'claimed' else '') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<script>
+// Poll only while there is something left to watch; a finished run is a
+// static page and should not keep asking.
+(function () {
+  const box = document.getElementById('progress');
+  if (box.dataset.complete === '1') return;
+  const run = box.dataset.run;
+  const tick = async () => {
+    try {
+      const r = await fetch('/api/runs/' + run, {headers: {'Accept': 'application/json'}});
+      const p = await r.json();
+      const pct = p.total ? Math.round(100 * (p.done + p.failed) / p.total) : 0;
+      document.getElementById('bar').style.width = pct + '%';
+      if (p.complete) { location.reload(); return; }
+    } catch (e) { /* the dashboard may be restarting; try again */ }
+    setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 3000);
+})();
+</script>
+{% endblock %}
