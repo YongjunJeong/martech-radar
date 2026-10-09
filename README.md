@@ -156,8 +156,8 @@ It uses local fixture pages and synthetic observations rather than customer data
 .venv/bin/python -m pytest tests/ -q
 ```
 
-**Latest local verification: 273 tests passed and Ruff passed** on macOS with
-Python 3.13. This is a functional test result, not a detection-accuracy benchmark.
+The repository previously recorded 273 passing tests on Python 3.13. The current
+2026-10-09 refinement reran **273 tests and Ruff successfully** on Python 3.11. This is a functional test result, not a detection-accuracy benchmark.
 No production impact or accuracy rate is claimed.
 
 ## Explore the code
@@ -185,6 +185,14 @@ Watchlists, scan databases, logs, backups and credentials are excluded from Git.
 Cookie and storage values are not collected, but selected vendor configuration
 identifiers, URLs and free-text evidence can still reveal business information.
 Keep real scan outputs private and use the synthetic demo for public screenshots.
+
+## Next engineering work
+
+Keep observation quality separate from business conclusions. For a controlled cloud
+deployment, first isolate browser/network access and authenticate the dashboard.
+Then measure queue age, scan failure reasons and job retries; test worker restart
+and backup recovery before shared operation. These are planned checks, not existing
+production reliability results.
 
 ## License
 
