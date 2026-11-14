@@ -121,11 +121,11 @@ def test_a_vendor_absent_then_present_is_new(store, registry):
     assert sig.KIND_COMPETITOR_NEW in kinds(store)
 
 
-def test_our_own_arrival_is_reported_separately(store, registry, home_insider):
+def test_legacy_home_setting_does_not_change_arrival_kind(store, registry, home_insider):
     record(store, registry, BUSY)
     record(store, registry, BUSY, INSIDER)
-    assert sig.KIND_HOME_NEW in kinds(store)
-    assert sig.KIND_COMPETITOR_NEW not in kinds(store)
+    assert kinds(store) == [sig.KIND_NEW]
+
 
 
 def test_without_a_home_vendor_every_arrival_is_just_an_arrival(store, registry):
@@ -155,13 +155,14 @@ def test_two_consecutive_absences_confirm_removal(store, registry):
     assert states(store)["braze"] == sig.STATE_REMOVED
 
 
-def test_losing_our_own_account_outranks_everything(store, registry, home_insider):
+def test_vendor_affiliation_does_not_change_priority(store, registry, home_insider):
     record(store, registry, BUSY, INSIDER, BRAZE)
     record(store, registry, BUSY)
     found = sig.all_signals(store)
-    assert {s.kind for s in found} >= {sig.KIND_HOME_REMOVAL, sig.KIND_COMPETITOR_REMOVAL}
-    assert found[0].kind == sig.KIND_HOME_REMOVAL
-    assert all(s.priority > found[0].priority for s in found[1:])
+    assert len(found) == 2
+    assert {s.kind for s in found} == {sig.KIND_REMOVAL}
+    assert len({s.priority for s in found}) == 1
+
 
 
 def test_a_vendor_that_comes_back_is_not_reported_as_new(store, registry):
@@ -206,7 +207,7 @@ def test_runs_that_skipped_this_target_do_not_count_as_absence(store, registry):
 
 
 def test_indirect_only_evidence_never_produces_a_signal(store, registry):
-    # Indirect evidence alone must not establish a vendor change.
+    # The measured noise floor lives entirely in this layer.
     record(store, registry, BUSY)
     record(store, registry, BUSY, {"csp_hosts": {"": ["sdk.iad-03.braze.com"]}})
     assert "braze" not in states(store)
@@ -226,68 +227,31 @@ def test_a_vendor_seen_on_only_one_url_still_counts(store, registry):
     assert "braze" in states(store)
 
 
-# --- greenfield -------------------------------------------------------------
+@pytest.mark.parametrize("evidence", [BUSY, BRAZE, {}])
+def test_static_stack_does_not_create_sales_opportunities(store, registry, evidence):
+    record(store, registry, evidence)
+    record(store, registry, evidence)
+    assert kinds(store) == []
+    assert sig.quiet_greenfield(store) == []
+    assert sig.has_judged_run(store, "acme")
 
 
-def test_greenfield_needs_real_marketing_activity(store, registry):
-    record(store, registry, BUSY)
-    assert sig.KIND_GREENFIELD in kinds(store)
-
-
-def test_a_thin_site_is_not_a_greenfield_lead_but_is_still_reported(store, registry):
-    record(store, registry, {"network": {"hosts": ["www.google-analytics.com"]}})
-    assert sig.KIND_GREENFIELD not in kinds(store)
-    quiet = sig.quiet_greenfield(store)
-    assert [q["target_id"] for q in quiet] == ["acme"], \
-        "filtered-out accounts must be visible, not silently dropped"
-
-
-def test_an_account_with_an_engagement_platform_is_never_greenfield(store, registry):
-    record(store, registry, BUSY, BRAZE)
-    assert sig.KIND_GREENFIELD not in kinds(store)
-
-
-def test_a_company_with_zero_detections_still_appears_somewhere(store, registry):
-    """The regression that the dashboard's own arithmetic exposed.
-
-    A site scanned successfully where nothing matched has an empty change
-    list. Gating on that list dropped the company out of the signal inbox
-    *and* the below-threshold list at once — judged, greenfield, invisible.
-    """
-    record(store, registry, {"network": {"hosts": ["nothing-we-know.test"]}})
-    assert sig.changes_for(store, "acme") == []
-    assert sig.has_judged_run(store, "acme") is True
-    assert [q["target_id"] for q in sig.quiet_greenfield(store)] == ["acme"]
-
-
-def test_a_removal_candidate_is_not_greenfield_until_confirmed(store, registry):
-    """One missed Braze load must not turn last week's Braze customer into a
-    "no platform" lead. The account leaves both greenfield buckets while the
-    removal is a candidate, and enters them once it is confirmed."""
+def test_removal_confirmation_never_creates_a_sales_opportunity(store, registry):
     record(store, registry, BRAZE)
-    record(store, registry, BRAZE)
-    record(store, registry, BUSY)
+    record(store, registry)
     assert states(store)["braze"] == sig.STATE_REMOVAL_CANDIDATE
-    assert sig.KIND_GREENFIELD not in kinds(store)
-    assert "acme" not in {q["target_id"] for q in sig.quiet_greenfield(store)}
-
-    record(store, registry, BUSY)                      # a week later, still gone
+    record(store, registry)
     assert states(store)["braze"] == sig.STATE_REMOVED
-    assert sig.KIND_GREENFIELD in kinds(store)
-
-
-def test_greenfield_buckets_account_for_every_judged_company(store, registry):
-    """Signals + below-threshold must equal the greenfield count, always."""
-    record(store, registry, BUSY)                      # qualifies
-    signalled = {s.target_id for s in sig.all_signals(store)
-                 if s.kind == sig.KIND_GREENFIELD}
-    quiet = {q["target_id"] for q in sig.quiet_greenfield(store)}
-    assert signalled | quiet == {"acme"}
-    assert not (signalled & quiet), "a company must be in exactly one bucket"
+    assert kinds(store) == [sig.KIND_REMOVAL]
 
 
 def test_a_maintenance_page_cannot_remove_a_whole_stack(store, registry):
-    """A maintenance page with HTTP 200 must not imply vendor removal."""
+    """The Phase 6 field finding.
+
+    A 200-OK maintenance notice carries no tags. Before THIN existed it
+    turned an insurer's five vendors into five REMOVAL_CANDIDATEs in one run,
+    and would have confirmed all five as REMOVED the following week.
+    """
     record(store, registry, BUSY, BRAZE)
     record(store, registry, BUSY, BRAZE)
     # The interstitial: OK-looking, but nothing on it.
@@ -301,7 +265,7 @@ def test_a_maintenance_page_cannot_remove_a_whole_stack(store, registry):
 
     assert states(store)["braze"] == sig.STATE_STABLE
     assert not [s for s in sig.all_signals(store)
-                if s.kind in (sig.KIND_COMPETITOR_REMOVAL, sig.KIND_INSIDER_REMOVAL)]
+                if s.kind in (sig.KIND_COMPETITOR_REMOVAL, sig.KIND_REMOVAL)]
 
 
 # --- migration --------------------------------------------------------------
@@ -432,8 +396,8 @@ def test_a_subdomain_move_is_still_the_same_site(store, registry):
 
 
 def test_landing_on_another_domain_resets_history_and_says_so(store, registry):
-    """travel.travel.example landed on nol.booking.example one week: Braze was not
-    removed from the original site, we simply looked at another site. No removal, no
+    """travel.interpark.com landed on nol.yanolja.com one week: Braze was not
+    removed from Interpark, we simply looked at Yanolja. No removal, no
     greenfield for a page that is not theirs — one HOST_CHANGED signal."""
     record(store, registry, BUSY, BRAZE)
     record(store, registry, BUSY, BRAZE)
@@ -445,11 +409,11 @@ def test_landing_on_another_domain_resets_history_and_says_so(store, registry):
     assert "acme" not in {q["target_id"] for q in sig.quiet_greenfield(store)}
 
 
-def test_coming_back_onto_the_watched_domain_allows_greenfield_again(store, registry):
+def test_returning_to_watched_domain_resets_stack_comparison(store, registry):
     record(store, registry, BUSY, BRAZE, host="old.partner.test")
     record(store, registry, BUSY, host="acme.test")
     found = {s.kind for s in sig.all_signals(store)}
-    assert sig.KIND_HOST_CHANGED in found and sig.KIND_GREENFIELD in found
+    assert found == {sig.KIND_HOST_CHANGED}
     assert sig.KIND_COMPETITOR_REMOVAL not in found
 
 
@@ -463,21 +427,21 @@ def test_the_host_change_signal_clears_once_the_new_site_has_a_second_run(store,
 
 def test_registrable_domain_heuristic():
     from radar import hosts
-    assert hosts.registrable("nol.travel.example") == "travel.example"
+    assert hosts.registrable("nol.interpark.com") == "interpark.com"
     assert hosts.registrable("https://www.shop.foo.co.kr/x") == "foo.co.kr"
-    assert hosts.registrable("www.booking.example") == "booking.example"
-    assert hosts.off_domain(["https://travel.travel.example/"], ["nol.booking.example"])
-    assert not hosts.off_domain(["https://travel.travel.example/"], ["nol.travel.example"])
-    assert not hosts.off_domain([], ["nol.booking.example"])
+    assert hosts.registrable("www.yanolja.com") == "yanolja.com"
+    assert hosts.off_domain(["https://travel.interpark.com/"], ["nol.yanolja.com"])
+    assert not hosts.off_domain(["https://travel.interpark.com/"], ["nol.interpark.com"])
+    assert not hosts.off_domain([], ["nol.yanolja.com"])
 
 
 def test_a_brand_that_moved_domains_is_still_on_domain():
     from radar import hosts
-    assert not hosts.off_domain(["https://www.samplebrand.co.kr/"], ["www.samplebrand.com"])
-    assert not hosts.off_domain(["https://www.samplecola.co.kr/"], ["www.sample-cola.com"])
-    assert not hosts.off_domain(["https://www.samplebrandusa.com/"], ["samplebrand.co.kr"])
-    assert hosts.off_domain(["https://www.samplefresh.com/"], ["www.samplemarket.com"])
-    assert hosts.off_domain(["https://travel.travel.example/"], ["nol.booking.example"])
+    assert not hosts.off_domain(["https://www.coreana.co.kr/"], ["www.coreana.com"])
+    assert not hosts.off_domain(["https://www.cocacola.co.kr/"], ["www.coca-cola.com"])
+    assert not hosts.off_domain(["https://www.inbodyusa.com/"], ["inbody.co.kr"])
+    assert hosts.off_domain(["https://www.lottefresh.com/"], ["www.lotteon.com"])
+    assert hosts.off_domain(["https://travel.interpark.com/"], ["nol.yanolja.com"])
 
 
 def test_chromes_error_page_is_not_an_observation(store, registry):
@@ -521,11 +485,11 @@ def test_a_bot_manager_challenge_page_is_a_block_even_when_stored_as_ok(store, r
 
 
 def test_a_site_that_always_lived_on_another_domain_is_taken_at_its_word(store, registry):
-    """old.example has landed on new.example since the first run: that is where
+    """nhqv.com has landed on nhsec.com since the first run: that is where
     the company's site is, not a sign we are looking at someone else."""
-    record(store, registry, BUSY, host="www.new.test")
-    record(store, registry, BUSY, host="www.new.test")
-    assert sig.KIND_GREENFIELD in kinds(store)
+    record(store, registry, BUSY, host="www.nhsec.test")
+    record(store, registry, BUSY, host="www.nhsec.test")
+    assert kinds(store) == []
     assert sig.KIND_HOST_CHANGED not in kinds(store)
 
 
@@ -535,13 +499,13 @@ def test_a_parking_page_or_s3_gate_is_a_block_not_a_look(store, registry):
     run_id = store.start_run(1)
     result = {"schema_version": 1,
               "scan": {"url": "https://acme.test/", "status": ev.STATUS_OK, "http_status": 200,
-                       "page_host": "demo-bucket.s3.eu-west-1.amazonaws.com",
-                       "final_url": "https://demo-bucket.s3.eu-west-1.amazonaws.com/index.html",
+                       "page_host": "66b575c0.s3.eu-west-1.amazonaws.com",
+                       "final_url": "https://66b575c0.s3.eu-west-1.amazonaws.com/index.html",
                        "title": "", "started_at": "2026-09-15T00:00:00+00:00"},
               "evidence": {}, "counts": {}, "warnings": []}
     scan_id = store.record_scan(run_id, "acme", result)
     store.record_detections(scan_id, det.detect(result, registry))
-    assert ev.detect_block(200, "", "", "demo-bucket.s3.eu-west-1.amazonaws.com") == "standin_host:amazonaws.com"
+    assert ev.detect_block(200, "", "", "66b575c0.s3.eu-west-1.amazonaws.com") == "standin_host:amazonaws.com"
     stats = bat.redetect(store, registry)
     assert stats["restatused"] == 1
     assert states(store)["braze"] == sig.STATE_BASELINE

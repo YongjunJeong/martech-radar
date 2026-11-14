@@ -1,0 +1,8 @@
+# Opt-in overlay: shared secret is mounted only into the web service.
+services:
+  web:
+    secrets:
+      - preparation_gateway_token
+secrets:
+  preparation_gateway_token:
+    file: ${RADAR_GATEWAY_TOKEN_FILE:?Set a private gateway token file readable by UID 1000}

@@ -1,0 +1,1 @@
+{% if pattern is defined %}<span class="observation-tag pattern-{{ pattern.key }}" title="{{ pattern.hint }}">{{ pattern.label }}</span>{% if pattern.fluctuating %} <span class="observation-tag pattern-fluctuating" title="{{ pattern.fluctuation_note }}">검출·미검출 반복</span>{% endif %}{% else %}<span class="change-result">{{ e.label if e is defined else tool.label }}</span>{% endif %}

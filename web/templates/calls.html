@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import company_link %}
+{% block title %}{{ t('calls.title') }}{% endblock %}
+{% block content %}
+<h1>{{ t('calls.title') }}</h1>
+<p class="lede">{{ t('calls.lede') }}</p>
+
+{% for tier in tiers %}
+<section class="tier {{ tier.tier }}">
+  <h2>{{ tier.title }} <span class="muted">{{ tier.entries|length }}</span></h2>
+  <p class="note">{{ tier.note }}</p>
+  <ol class="call-list">
+  {% for e in tier.entries %}
+    <li class="call {{ 'acked' if e.ack }}">
+      <div class="call-head">
+        <h3 class="sig-co">{{ company_link(e.target_id, e.company) }}</h3>
+        <span class="muted">{{ industries.get(e.industry, e.industry) }}</span>
+        {% if e.ack %}<span class="chip">{{ t('ack.acked') }}</span>{% endif %}
+      </div>
+      <p class="headline">{{ e.reason }}</p>
+      <details>
+        <summary>{{ t('calls.evidence') }} {{ e.evidence|length }} · {{ t('calls.facts') }} {{ e.facts|length }}</summary>
+        <ul class="evidence-list">
+          {% for line in e.evidence %}<li>{{ line }}</li>{% endfor %}
+        </ul>
+        <p class="eyebrow">{{ t('calls.facts') }}</p>
+        <ul class="evidence-list facts">
+          {% for f in e.facts %}<li>{{ f.lstrip('- ') }}</li>{% endfor %}
+        </ul>
+      </details>
+      <div class="ack-row">
+        <a class="pill sm" href="/companies/{{ e.target_id }}/brief">{{ t('calls.brief') }}</a>
+        <form method="post" action="/signals/ack">
+          <input type="hidden" name="key" value="{{ e.key }}">
+          <input type="hidden" name="next" value="/calls">
+          {% if not e.ack %}
+            <button name="state" value="ACKED">{{ t('ack.ack') }}</button>
+            <button name="state" value="DISMISSED" class="ghost">{{ t('ack.dismiss') }}</button>
+          {% else %}
+            <button name="state" value="" class="ghost">{{ t('ack.clear') }}</button>
+          {% endif %}
+        </form>
+      </div>
+    </li>
+  {% endfor %}
+  </ol>
+</section>
+{% else %}
+<p class="empty">{{ t('calls.empty') }}</p>
+{% endfor %}
+{% endblock %}

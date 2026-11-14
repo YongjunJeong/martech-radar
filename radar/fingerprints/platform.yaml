@@ -110,6 +110,7 @@ fingerprints:
     weak_signals:
       hosts: [toast.com, toastoven.net]
 
+  # --- Korea pack (2026-09): mined from 996-site stored evidence ------------
 
   - id: onetag_enliple
     name: Enliple OneTag / DataManager

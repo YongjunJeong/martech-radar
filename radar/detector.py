@@ -5,7 +5,7 @@ independently was it seen". A vendor named inside a CSP header is a policy
 that permits it; a vendor whose hostname the browser actually contacted,
 whose global the page created and whose IndexedDB it opened is a vendor
 that is running. Those two must never come out with the same verdict, or
-the removal signals turn into noise.
+the removal signals in Phase 4 turn into noise.
 
 So every match is attributed to an evidence *layer*, layers are split into
 direct (observed executing) and indirect (merely referenced), and the

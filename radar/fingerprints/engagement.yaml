@@ -1,12 +1,14 @@
 # Customer engagement / personalisation platforms.
-# All vendors use the same evidence layers and detection thresholds.
+# This is the commercially decisive category: Insider plus everyone we
+# displace or lose to. Patterns here get the most scrutiny, because a false
+# DETECTED costs a rep a wasted call and a false NOT_DETECTED hides a deal.
 category: engagement
 fingerprints:
   - id: insider
     name: Insider
     vendor_url: https://useinsider.com
     note: >
-      The partner slug can appear in two places - the CDN subdomain
+      The partner slug leaks in two places - the CDN subdomain
       (<partner>.api.useinsider.com) and the versioned global
       __INSIDER_SCRIPT_VERSION_<partner>__ - so a hit also tells us the
       account name, not just the vendor.
@@ -147,7 +149,7 @@ fingerprints:
   - id: groobee
     name: Groobee
     vendor_url: https://groobee.net
-    note: Korean personalisation and onsite-marketing tool.
+    note: Korean personalisation/onsite-marketing tool; a common Insider rival in mid-market retail.
     signals:
       hosts: [groobee.net, groobee.co.kr, groobee.io]
       window: ["groobee", "Groobee"]
@@ -159,6 +161,7 @@ fingerprints:
       hosts: [recopick.com, recopick.net]
       window: ["recopick"]
 
+  # --- Korea pack (2026-09): mined from 996-site stored evidence ------------
 
   - id: datarize
     name: Datarize

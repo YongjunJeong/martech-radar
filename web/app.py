@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote
+from typing import Annotated
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import StringConstraints
 
 from radar import config as cfg
 from radar import registry as reg
@@ -25,12 +27,16 @@ from radar import evidence as ev
 from radar import targets as tgt
 from radar import security
 from radar import brief as brf
+from radar import calls as cl
 from radar import tasks as tsk
 from radar.batch import due_split, jobs_for
 from radar.store import Store
 from radar.strings import translator
 
-from . import data
+from . import data, sales, policy_references
+
+ObservationFilter = Annotated[str, StringConstraints(pattern=sales.OBSERVATION_FILTER_PATTERN)]
+SolutionTypeFilter = Annotated[str, StringConstraints(pattern=sales.SOLUTION_TYPE_PATTERN)]
 
 HERE = Path(__file__).resolve().parent
 
@@ -51,8 +57,11 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
     t = translator(lang)
     templates.env.globals.update(
         t=t,
+        analysis_since=settings.analysis.since,
         lang=lang,
         requires_login=settings.server.requires_login,
+        preparation_enabled=settings.preparation.enabled,
+        preparation_notifications=settings.preparation.enabled,
         trusted=ev.TRUSTWORTHY_STATUSES,
         verdict_label=_labels(t, "verdict", ("DETECTED", "PROBABLE")),
         state_label=_labels(t, "state", data.STATE_ORDER),
@@ -73,8 +82,14 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
     def industry_labels(s: Store) -> dict[str, str]:
         """Industry labels come from the database, like the watchlist itself."""
         return {row["code"]: (row["label_en"] if lang != "ko" and row["label_en"]
-                              else row["label"])
+                              else sales.INDUSTRIES.get(row["code"], row["label"]))
                 for row in s.industries()}
+
+    def industry_selection(value, labels):
+        try:
+            return sales.normalize_industries(value, labels)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def store() -> Store:
         return Store(app.state.db_path)
@@ -87,6 +102,13 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
     @app.middleware("http")
     async def require_session(request: Request, call_next):
         """With a token configured, everything needs a session except login."""
+        if settings.server.public_origin:
+            authority = urlsplit(settings.server.public_origin).netloc
+            # Canonical deployment config, never arbitrary forwarded headers.
+            if request.headers.get('host', '').lower() != authority.lower():
+                return PlainTextResponse('Invalid host', status_code=400)
+            request.scope['scheme'] = 'https'
+            request.scope['headers'] = [(k, v) for k, v in request.scope['headers'] if k.lower() != b'host'] + [(b'host', authority.encode('ascii'))]
         gated = (settings.server.requires_login
                  and request.url.path not in ("/login", "/health")
                  and not request.url.path.startswith("/static"))
@@ -96,7 +118,14 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
         return await call_next(request)
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request):
+    def index(request: Request, status: str = "changes", q: str = "", industry: Annotated[list[str] | None, Query()] = None, page_number: int = Query(1, alias="page", ge=1),
+              solution_type: Annotated[list[SolutionTypeFilter] | None, Query()] = None,
+              observation: Annotated[list[ObservationFilter] | None, Query()] = None):
+        if lang == "ko":
+            with store() as s:
+                labels = industry_labels(s)
+                return page(request, "sales_board.html", industries=labels, active="index",
+                            **sales.board(s, labels, status=status, q=q, industry=industry_selection(industry, labels), page=page_number, solution_type=solution_type, observation=observation))
         with store() as s:
             labels = industry_labels(s)
             companies = data.company_rows(s, labels, app.state.language)
@@ -104,7 +133,7 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
                         overview=data.overview(s, companies),
                         industries_rows=data.industry_rows(companies),
                         vendors=[v for v in data.vendor_rows(s, companies)
-                                 if v["category"] == sig.ENGAGEMENT and v["count"]],
+                                 if v["count"]],
                         active="index")
 
     @app.get("/signals", response_class=HTMLResponse)
@@ -114,7 +143,7 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
         with store() as s:
             labels = industry_labels(s)
             everything = sig.all_signals(s, language=app.state.language)
-            acks = s.signal_acks()
+            acks = {sig.normalize_key(k): v for k, v in s.signal_acks().items()}
             found = []
             for x in everything:
                 row = x.as_dict()
@@ -134,33 +163,57 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
                         show_dismissed=bool(dismissed),
                         counts={k: sum(1 for x in everything if x.kind == k)
                                 for k in sig.PRIORITY},
-                        quiet=sig.quiet_greenfield(s, app.state.language),
                         unjudged=[c for c in data.company_rows(s, labels, app.state.language)
                                   if not c["judged"]],
                         kind=kind, industry=industry, active="signals")
 
     @app.post("/signals/ack")
-    def signal_ack(request: Request, key: str = Form(...), state: str = Form("")):
+    def signal_ack(request: Request, key: str = Form(...), state: str = Form(""),
+                   next: str = Form("/signals")):
         guard(request)
         if state and state not in Store.ACK_STATES:
             raise HTTPException(status_code=400, detail=f"unknown state {state!r}")
         with store() as s:
             s.set_signal_ack(key, state or None)
-        return back(request, "/signals", "")
+        return back(request, next if next.startswith("/") else "/signals", "")
+
+    @app.get("/calls", response_class=HTMLResponse)
+    def call_list(request: Request, status: str = "contact", q: str = "", industry: Annotated[list[str] | None, Query()] = None, page_number: int = Query(1, alias="page", ge=1),
+              solution_type: Annotated[list[SolutionTypeFilter] | None, Query()] = None,
+              observation: Annotated[list[ObservationFilter] | None, Query()] = None):
+        if lang == "ko":
+            with store() as s:
+                labels = industry_labels(s)
+                return page(request, "sales_board.html", industries=labels, active="calls",
+                            **sales.board(s, labels, status=status, q=q, industry=industry_selection(industry, labels), page=page_number, solution_type=solution_type, observation=observation))
+        with store() as s:
+            labels = industry_labels(s)
+            tiers = cl.call_list(s, language=app.state.language)
+        return page(request, "calls.html", industries=labels, tiers=tiers,
+                    total=sum(len(t["entries"]) for t in tiers), active="calls")
 
     @app.get("/companies", response_class=HTMLResponse)
-    def companies(request: Request, industry: str | None = None,
-                  state: str | None = Query(None, pattern="^(engagement|greenfield|unjudged|moved)$")):
+    def companies(request: Request, industry: Annotated[list[str] | None, Query()] = None,
+                  state: str | None = Query(None, pattern="^(observed|no_tools|unjudged|moved)$"),
+                  status: str = "all", q: str = "", page_number: int = Query(1, alias="page", ge=1),
+                  solution_type: Annotated[list[SolutionTypeFilter] | None, Query()] = None,
+              observation: Annotated[list[ObservationFilter] | None, Query()] = None):
+        if lang == "ko" and state is None:
+            with store() as s:
+                labels = industry_labels(s)
+                return page(request, "sales_board.html", industries=labels, active="companies",
+                            **sales.board(s, labels, status=status, q=q, industry=industry_selection(industry, labels), page=page_number, solution_type=solution_type, observation=observation))
         with store() as s:
             labels = industry_labels(s)
             rows = data.company_rows(s, labels, app.state.language)
+        industry = industry_selection(industry, labels)
         if industry:
-            rows = [r for r in rows if r["industry"] == industry]
-        if state == "engagement":
-            rows = [r for r in rows if r["judged"] and r["engagement"] and not r["off_domain"]]
-        elif state == "greenfield":
+            rows = [r for r in rows if r["industry"] in industry]
+        if state == "observed":
+            rows = [r for r in rows if r["judged"] and r["observed"] and not r["off_domain"]]
+        elif state == "no_tools":
             rows = [r for r in rows if r["judged"] and not r["off_domain"]
-                    and not r["engagement"] and not r["engagement_pending"]]
+                    and not r["observed"]]
         elif state == "unjudged":
             rows = [r for r in rows if not r["judged"]]
         elif state == "moved":
@@ -169,13 +222,22 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
                     industry=industry, state=state, active="companies")
 
     @app.get("/companies/{target_id}", response_class=HTMLResponse)
-    def company(request: Request, target_id: str):
+    def company(request: Request, target_id: str,
+                industry: Annotated[list[str] | None, Query()] = None,
+                solution_type: Annotated[list[SolutionTypeFilter] | None, Query()] = None,
+              observation: Annotated[list[ObservationFilter] | None, Query()] = None):
         with store() as s:
             labels = industry_labels(s)
             detail = data.company_detail(s, labels, target_id, app.state.language)
+            policy_reference = policy_references.view(s, s.target(target_id)) if detail else None
+            story = sales.company_cards(s, labels, target_id, solution_type=solution_type, observation=observation)[0] if detail and lang == "ko" else None
+            selected_industries = industry_selection(industry, labels)
+            if story:
+                sales.apply_industry_context(story, selected_industries, labels)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"unknown company {target_id!r}")
-        return page(request, "company.html", industries=labels, c=detail, active="companies")
+        return page(request, "company.html", industries=labels, c=detail, story=story,
+                    policy_reference=policy_reference, active="companies")
 
     @app.get("/companies/{target_id}/brief", response_class=HTMLResponse)
     def company_brief(request: Request, target_id: str):
@@ -254,7 +316,8 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
                 request.cookies.get(security.COOKIE_NAME), settings.server.token):
             raise HTTPException(status_code=401, detail="sign in first")
         origin = request.headers.get("origin")
-        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+        expected_origin = settings.server.public_origin or str(request.base_url).rstrip('/')
+        if origin and origin.rstrip("/") != expected_origin:
             # Same-origin only. The cookie is SameSite=strict as well; this
             # is the belt to that pair of braces.
             raise HTTPException(status_code=403, detail="cross-origin write refused")
@@ -278,7 +341,8 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
         response = RedirectResponse(url="/", status_code=303)
         response.set_cookie(
             security.COOKIE_NAME, security.session_value(settings.server.token),
-            httponly=True, samesite="strict", max_age=60 * 60 * 24 * 30)
+            httponly=True, secure=bool(settings.server.public_origin),
+            samesite="strict", max_age=60 * 60 * 24 * 30)
         return response
 
     @app.post("/logout")
@@ -474,5 +538,14 @@ def create_app(db_path: str | None = None, targets_path: str | None = None,
     def health():
         with store() as s:
             return {"ok": True, "runs": len(s.runs(limit=1)), "db": str(s.path)}
+
+    if settings.preparation.enabled:
+        from .preparation import Drafts
+        from .preparation_routes import register
+        with store() as s:
+            drafts = Drafts(s.path)
+        drafts.initialize()
+        app.state.drafts = drafts
+        register(app, drafts, settings, guard, page, store)
 
     return app

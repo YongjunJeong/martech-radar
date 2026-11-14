@@ -1,0 +1,10 @@
+<div class="change-overview">
+<strong>{{ '마지막 정상 수집까지의 변화' if card.bucket=='check' else '변화가 관측된 솔루션' }} {{ card.events|length }}개</strong>
+{% if card.events[0].pattern is defined %}
+<ul class="change-totals">{% for key, events in card.events|groupby('pattern.key') %}<li><span class="observation-tag pattern-{{ key }}" title="{{ events[0].pattern.hint }}">{{ events[0].pattern.label }}</span> <b>{{ events|length }}개</b></li>{% endfor %}</ul>
+{% set fluctuating_count = card.events|selectattr('pattern.fluctuating')|list|length %}
+{% if fluctuating_count %}<p class="pattern-summary">위 변화 중 {{ fluctuating_count }}개는 <span class="observation-tag pattern-fluctuating">검출·미검출 반복</span> · 솔루션별 이력을 확인하세요.</p>{% endif %}
+{% else %}<ul class="change-totals">{% for label, events in card.events|groupby('label') %}<li>{{ label }} <b>{{ events|length }}개</b></li>{% endfor %}</ul>{% endif %}
+<p class="change-readiness">반복 관측 기준 충족 {{ card.decision.ready_count }}개 · 재확인 필요 {{ card.events|length-card.decision.ready_count }}개</p>
+{% if card.bucket=='check' %}<p class="change-readiness">이전 기록의 집계입니다. 수집 상태를 확인하기 전에는 연락 근거로 쓰지 마세요.</p>{% endif %}
+</div>

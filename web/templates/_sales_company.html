@@ -1,0 +1,55 @@
+<section class="sales-company">
+<div class="company-overview">
+<div class="sales-verdict decision-{{ story.bucket }}">
+<span class="sales-badge {{ story.bucket }}">{{ story.label }}</span>
+<p class="decision-kicker">지금 연락을 검토해도 될까요?</p>
+<h2>{{ story.decision.action }}</h2>
+<dl class="decision-summary">
+<div><dt>확인한 기록</dt><dd>{{ story.decision.evidence }}</dd></div>
+<div><dt>지금 할 일</dt><dd>{% if story.bucket=='contact' %}아래에서 ‘확인 질문에 활용 가능’으로 표시된 {{ story.decision.allowed_count }}개 솔루션의 질문을 활용하세요. 재확인 대기 항목은 연락 근거에서 제외하세요.{% else %}{{ story.next_step }}{% endif %}</dd></div>
+</dl>
+{% if story.bucket=='watch' %}{% with card=story %}{% include "_sales_waiting.html" %}{% endwith %}{% endif %}
+{% if story.bucket=='contact' %}<p class="decision-limit">연락 전 확인은 구매 가능성 평가가 아닙니다. 실제 도입·중단과 구매 의향은 고객에게 확인해야 합니다.</p>{% endif %}
+{% if story.good_count %}<a class="pill" href="/companies/{{ c.id }}/brief">미팅 준비 요약</a>{% endif %}
+</div>
+<section class="company-change-overview" aria-labelledby="overall-change-title">
+<h2 id="overall-change-title">{{ '선택한 조건의 관측 요약' if story.observation else (story.solution_type_label ~ ' 변화 요약' if story.solution_type else '전체 변화 요약') }}</h2>
+{% if story.events %}{% with card=story %}{% include "_sales_change_overview.html" %}{% endwith %}
+<p class="contact-scope">지금 확인 질문에 활용할 수 있는 솔루션 <strong>{{ story.decision.allowed_count }}개</strong></p>
+{% else %}<p class="evidence-note">{{ story.decision.empty }}</p>{% endif %}
+<div class="observation-strip"><span>분석 시작 <strong>{{ analysis_since or '전체 이력' }} · KST</strong></span><span>첫 정상 수집 <strong>{{ story.baseline }}</strong></span><span>최근 정상 수집 <strong>{{ story.last_good }}</strong></span><span>정상 수집 <strong>{{ story.good_count }}회</strong></span></div>
+{% if story.bucket=='check' %}<p class="quality-note">최근 수집 {{ story.last_scan }} · {{ story.last_status }}. 아래 변화는 마지막 정상 수집까지의 기록입니다. 현재 연락 근거로 사용하기 전에 확인이 필요합니다.</p>{% endif %}
+</section>
+</div>
+{% if preparation_enabled %}<div class="prep-entry"><div><strong>이 기업에 제안할 내용을 준비하세요</strong><span>회사 조사·추천 → 유즈케이스 선택 → 제안서·메일</span></div><a class="pill" href="/companies/{{ c.id }}/prepare">제안 준비하기 →</a></div>{% endif %}
+<div class="company-findings" id="solution-changes">
+<h2>{{ '이전에 관측한 변화' if story.bucket=='check' else '솔루션별 변화와 연락 검토' }}</h2>
+{% include "_sales_pattern_guide.html" %}
+{% if story.events %}<p class="solution-order">솔루션을 펼치면 관측 이력과 실제 검출 근거를 볼 수 있습니다. 반복 관측 기준 충족 순 · 같은 단계에서는 솔루션 이름순</p>{% endif %}
+{% for line in story.paired %}<p class="quality-note">{{ line }}</p>{% endfor %}
+{% for e in story.events %}
+<details class="change-story solution-detail">
+<summary>
+<span class="solution-heading"><span class="change-category">{{ e.use }}</span> <strong>{{ e.name }}</strong> {% with pattern=e.pattern %}{% include "_sales_pattern_tag.html" %}{% endwith %}</span>
+<span class="solution-contact {{ 'ready' if e.contact_allowed else 'waiting' }}">{{ e.review_label }}</span>
+<span class="solution-toggle"><span class="control-label"><span class="when-closed">근거 보기</span><span class="when-open">접기</span></span>{% include "_disclosure_chevron.html" %}</span>
+</summary>
+<div class="solution-detail-body">
+<p class="muted">{{ e.purpose }}하는 솔루션입니다.</p>
+<div class="before-after"><div><small>변화 전 관측 · {{ e.previous_date }}</small><strong>{{ e.previous_result }}</strong></div><span aria-hidden="true">→</span><div><small>최근 관측 · {{ e.latest }}</small><strong>{{ e.latest_result }}</strong></div></div>
+<p class="evidence-note">{{ e.confidence }}</p>
+{% if e.pattern is defined and e.pattern.fluctuating %}<p class="pattern-explanation">{{ e.pattern.fluctuation_note }}</p>{% endif %}
+{% if e.previous_date is defined %}{% with evidence_expanded=true %}{% include "_sales_evidence.html" %}{% endwith %}{% endif %}
+<div class="event-review {{ 'ready' if e.contact_allowed else 'waiting' }}">
+<strong>{{ e.review_label }}</strong>{% if e.waiting_result is defined %}<p><strong>기다리는 결과</strong> {{ e.waiting_result }}</p>{% endif %}<p>{{ e.review_reason }}</p>
+{% if e.contact_allowed %}<div class="conversation"><strong>연락할 때 확인할 질문</strong><p>{{ e.question }}</p></div>{% endif %}
+</div>
+</div>
+</details>
+{% else %}<div class="sales-empty compact"><p>{{ story.decision.empty }}</p><p class="muted">관측되지 않은 솔루션이 있다고 해서 영업 기회로 판단하지 않습니다.</p></div>{% endfor %}
+<details class="observed-tools"><summary>최근 검출된 솔루션 {{ story.tool_count }}개 보기 <span class="muted">미팅 준비용 참고 정보</span></summary>
+<p class="evidence-note">마지막 정상 수집 {{ story.last_good }} 기준입니다. 솔루션이 검출됐다는 사실만으로 신규 도입이나 영업 기회를 뜻하지 않습니다.</p>
+<div class="tool-grid">{% for tool in story.tools if tool.state not in ['REMOVED','REMOVAL_CANDIDATE'] %}<div class="tool-card"><small>{{ tool.use }}</small><strong>{{ tool.name }}</strong><p>{{ tool.purpose }}</p>{% with pattern=tool.pattern %}{% include "_sales_pattern_tag.html" %}{% endwith %}<small>최근 검출 {{ tool.last_seen }}</small></div>{% else %}<p class="note">이 기간의 정상 수집에서 확인된 솔루션이 없습니다. 실제 미사용을 뜻하지 않습니다.</p>{% endfor %}</div>
+</details>
+</div>
+</section>

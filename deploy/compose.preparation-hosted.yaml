@@ -1,0 +1,38 @@
+# Explicit overlay for compose.hosting.yaml. No local-PC bridge or host port.
+services:
+  web:
+    networks: [frontend, outbound, preparation]
+  preparation:
+    image: ${RADAR_PREPARATION_IMAGE:?Pin the validated preparation image}
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs: [/tmp:size=512m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 128
+    networks: [preparation, outbound]
+    environment:
+      RADAR_KB_BUNDLE: /kb-bundle
+      RADAR_API_MODEL: ${RADAR_API_MODEL:?Set an explicit Anthropic API model ID}
+      RADAR_API_KEY_FILE: /run/secrets/preparation_api_key
+      RADAR_GATEWAY_TOKEN_FILE: /run/secrets/preparation_gateway_token
+      RADAR_GENERATION_TIMEOUT: ${RADAR_GENERATION_TIMEOUT:-240}
+    volumes:
+      - type: bind
+        source: ${RADAR_KB_BUNDLE:?Set a verified standalone KB bundle directory}
+        target: /kb-bundle
+        read_only: true
+        bind: {create_host_path: false}
+    secrets: [preparation_gateway_token, preparation_api_key]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+secrets:
+  preparation_api_key:
+    file: ${RADAR_API_KEY_FILE:?Set a private API key file readable by UID 1000}
+networks:
+  preparation: {internal: true}

@@ -17,12 +17,12 @@ export RADAR_HOME="$HOME_DIR"
 LOGS="$HOME_DIR/data/logs"
 # Before anything else: on a fresh workspace data/ does not exist yet, and
 # the lock file two lines down has to live somewhere.
-mkdir -p "$LOGS"
+mkdir -p "$LOGS" || exit 1
 
-# One run at a time. The weekly job takes minutes and a hand-run `radar batch`
-# is a documented thing to do; two concurrent batches would put eight
-# Chromium instances on the machine and both would be writing the same
-# database. If a run is already going, this one steps aside.
+# Keep scheduled wrappers from overlapping, including their digest work.
+# The database also enforces the shared concurrency limit for all workers
+# and inline batches. If this wrapper is already running, step aside.
+command -v flock >/dev/null 2>&1 || { echo "weekly-scan requires flock (util-linux)" >&2; exit 127; }
 exec 9>"$HOME_DIR/data/.weekly.lock"
 if ! flock -n 9; then
   echo "$(date -Iseconds) another run is in progress; skipping" >> "$LOGS/weekly-skipped.log"
@@ -30,15 +30,55 @@ if ! flock -n 9; then
 fi
 STAMP="$(date +%Y-%m-%d)"
 
+# Sampling is independent of collection: a telemetry failure must not stop scans.
+# Close the inherited flock fd in the child so it cannot prolong the scan lock.
+TELEMETRY_STAMP="$(date +%Y%m%dT%H%M%S)-$$"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$ROOT/.venv/bin/python" -m radar.telemetry \
+  --home "$HOME_DIR" --parent "$$" --interval 5 \
+  --output "$LOGS/load-$TELEMETRY_STAMP.jsonl" \
+  9>&- 2>>"$LOGS/load-errors.log" &
+telemetry_pid=$!
+stop_telemetry() {
+  kill "$telemetry_pid" 2>/dev/null || true
+  wait "$telemetry_pid" 2>/dev/null || true
+}
+trap stop_telemetry EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
 {
   echo "=== weekly run $STAMP ==="
   "${RADAR_BIN:-$ROOT/bin/radar}" batch --note "scheduled $STAMP" "$@"
   batch_status=$?
   echo "--- digest ---"
   "${RADAR_BIN:-$ROOT/bin/radar}" digest -o "$LOGS/digest-$STAMP.md"
-  echo "=== batch exit $batch_status ==="
+  digest_status=$?
+  echo "=== batch exit $batch_status; digest exit $digest_status ==="
 } >> "$LOGS/weekly-$STAMP.log" 2>&1
 
 # Prune logs older than a year; the database keeps the real history.
 find "$LOGS" -name 'weekly-*.log' -mtime +365 -delete 2>/dev/null
 find "$LOGS" -name 'digest-*.md' -mtime +365 -delete 2>/dev/null
+
+# Samples are verbose raw counters; retain a month for operational review.
+find "$LOGS" -name 'load-*.jsonl' -mtime +30 -delete 2>/dev/null
+
+# Preserve operational failures instead of returning the last cleanup status.
+review_status=0
+if [[ "${RADAR_CONTAINER:-0}" == 1 ]]; then
+  # Stop and flush the final load sample before reviewing this batch. Existing
+  # Ubuntu services retain their own daily reviewer until explicitly migrated.
+  stop_telemetry
+  trap - EXIT
+  "$ROOT/.venv/bin/python" -m radar.operations --day "$STAMP" \
+    --output "$HOME_DIR/data/operations/daily-reviews/$STAMP.json" \
+    >> "$LOGS/weekly-$STAMP.log" 2>&1
+  review_status=$?
+fi
+if (( batch_status != 0 )); then
+  exit "$batch_status"
+fi
+if (( digest_status != 0 )); then
+  exit "$digest_status"
+fi
+exit "$review_status"

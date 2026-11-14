@@ -1,7 +1,9 @@
-"""Evidence-backed briefs.
+"""The brief is the skill's entire permitted fact set.
 
-Check that observed facts appear in the brief, unsupported claims stay out,
-and an unobservable company produces a refusal rather than a blank.
+If something is missing from it the email loses a true point; if something
+wrong is in it the email states a falsehood to a real prospect. So these
+tests check both directions, and check that an unobservable company produces
+a refusal rather than a blank.
 """
 
 from __future__ import annotations
@@ -80,12 +82,12 @@ def store(tmp_path, registry):
         yield s
 
 
-def test_a_greenfield_brief_states_the_absence_and_the_counts(store):
+def test_brief_reports_observed_categories_without_sales_inferences(store):
     text = brief(store, "open")
     assert "무보유몰 (OpenMall)" in text
-    assert "greenfield" in text
-    assert "광고 픽셀 3종" in text
-    assert "A/B 테스트 도구 미검출" in text
+    assert "greenfield" not in text
+    assert "광고 (3)" in text
+    assert "실험 문화" not in text and "앱 사업" not in text
 
 
 def test_the_brief_names_the_incumbent_when_there_is_one(store):
@@ -96,12 +98,12 @@ def test_the_brief_names_the_incumbent_when_there_is_one(store):
 
 def test_an_unobservable_company_gets_a_refusal_not_a_blank_brief(store):
     text, usable = brf.company_brief(store, "walled", language="ko")
-    assert usable is False, "callers need a machine-readable stop, not just prose"
-    assert "정상 스캔된 적이 없습니다" in text
-    assert "콜드메일을 작성하지 마십시오" in text
+    assert usable is False, "the skill needs a machine-readable stop, not just prose"
+    assert "정상 수집 기록이 없습니다" in text
+    assert "관측 근거가 없어" in text
     assert "BLOCKED" in text
     # And crucially, no stack is offered for it to draw on.
-    assert "관측된 스택" not in text
+    assert "검출된 솔루션" not in text
 
 
 def test_unknown_id_is_reported_not_crashed(store):
@@ -117,24 +119,24 @@ def test_a_usable_brief_says_so(store):
 
 def test_the_digest_separates_change_from_state(store):
     text = brf.weekly_digest(store, language="ko")
-    assert "이번 주 변화" in text
-    assert "공략 가능" in text
-    assert "판정 불가 — greenfield 아님" in text
+    assert "최근 관측 기준 변화" in text
+    assert "공략 가능" not in text
+    assert "## 판정 불가" in text
     assert "walled" in text
 
 
 def test_digest_stats_agree_with_the_signal_list(store):
     stats = brf.digest_stats(store)
-    assert stats["greenfield"] >= 1
+    assert "greenfield" not in stats
     assert stats["unjudged"] == 1
-    assert stats["signals"] == stats["changes"] + stats["greenfield"]
+    assert stats["signals"] == stats["changes"]
 
 
 def test_the_brief_is_only_observed_facts(store):
     """No case studies, no vendor material — just what we saw."""
     text = brief(store, "open")
-    assert "메일에 인용 가능한 관측 사실" in text
-    assert "이 목록에 없는 것은 메일에 쓰지 마십시오" in text
+    assert "인용 가능한 관측 사실" in text
+    assert "방문한 페이지에서 확인한 사실" in text
     # Nothing in a brief may point at an external knowledge source.
     assert "search" not in text.lower() and "knowledge" not in text.lower()
 
@@ -191,13 +193,13 @@ def test_a_platform_lost_recently_is_not_called_greenfield(store, registry):
     text = brief(store, "held")
     assert "greenfield" not in text
     assert "모두에서 미검출" not in text
-    assert "현재 미검출" in text and "Braze" in text
-    assert "이탈 후보이며 확정 아님" in text
+    assert "연속 미검출" in text and "Braze" in text
+    assert "계약 종료 확정 아님" in text
 
 
 def test_a_brief_refuses_when_the_latest_look_landed_on_someone_elses_domain(store, registry):
-    """A watched URL redirected to another company's homepage one week. Nothing on
-    that page is a fact about the original company, so there is no brief to write."""
+    """Interpark's URL redirected to Yanolja's homepage one week. Nothing on
+    that page is a fact about Interpark, so there is no brief to write."""
     run = store.start_run(1)
     result = {"schema_version": 1,
               "scan": {"url": "https://held.test/", "status": ev.STATUS_OK,
@@ -209,7 +211,7 @@ def test_a_brief_refuses_when_the_latest_look_landed_on_someone_elses_domain(sto
 
     text, usable = brf.company_brief(store, "held", language="ko")
     assert usable is False
-    assert "somebody-else.test" in text and "콜드메일" in text
+    assert "somebody-else.test" in text and "관측 근거가 없어" in text
     assert "광고 픽셀" not in text                      # nothing from that page is cited
 
 
@@ -226,5 +228,5 @@ def test_after_a_brand_domain_move_the_brief_counts_only_the_new_site(store, reg
     store.record_detections(scan_id, det.detect(result, registry))
     text, usable = brf.company_brief(store, "open", language="ko")
     assert usable is True
-    assert "착지 변경" in text and "open.test → open-shop.test" in text
-    assert "판정 가능한 1회 실행 모두에서 미검출" in text
+    assert "접속 사이트 변경" in text and "open.test → open-shop.test" in text
+    assert "그 이전 이력과는 비교하지 않음" in text

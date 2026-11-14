@@ -1,0 +1,133 @@
+# Single-host deployment. Nothing here installs timers or activates collection.
+name: martech-radar-hosting
+x-backup-environment: &backup-environment
+  RADAR_BACKUP_DIRECTORY: /backups
+  RADAR_BACKUP_KEEP: ${RADAR_BACKUP_KEEP:-3}
+  RADAR_BACKUP_MAX_GIB: ${RADAR_BACKUP_MAX_GIB:-80}
+  RADAR_BACKUP_MIN_FREE_GIB: ${RADAR_BACKUP_MIN_FREE_GIB:-2}
+x-backup-volume: &backup-volume
+  type: bind
+  source: ${RADAR_BACKUP_HOME:?Set a separate private backup directory}
+  target: /backups
+  bind: {create_host_path: false}
+x-common: &common
+  init: true
+  user: "1000:1000"
+  read_only: true
+  tmpfs: [/tmp:size=512m,mode=1777]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment: &environment
+    RADAR_DEPLOYMENT: hosting
+  volumes:
+    - &workspace-volume
+      type: bind
+      source: ${RADAR_HOSTING_HOME:?Set a NEW hosting workspace}
+      target: /workspace
+      bind: {create_host_path: false}
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+  restart: "no"
+services:
+  web:
+    <<: *common
+    image: ${RADAR_WEB_IMAGE:?Pin the validated web image}
+    environment:
+      <<: *environment
+      RADAR_TELEMETRY_ROLE: web
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1
+    # No host port. The HTTPS proxy is the only public ingress.
+    networks: [frontend, outbound]
+    secrets: [preparation_gateway_token]
+  proxy:
+    image: ${RADAR_PROXY_IMAGE:?Pin the validated Caddy image}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    environment:
+      RADAR_PUBLIC_HOST: ${RADAR_PUBLIC_HOST:?Set the public hostname}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - proxy_data:/data
+      - proxy_config:/config
+    tmpfs: [/tmp:size=64m,mode=1777]
+    networks: [frontend, outbound]
+    depends_on:
+      web: {condition: service_healthy}
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  worker:
+    <<: *common
+    profiles: [collection]
+    image: ${RADAR_COLLECTOR_IMAGE:?Pin the validated collector image}
+    environment:
+      <<: [*environment, *backup-environment]
+      RADAR_TELEMETRY_ROLE: worker
+    restart: unless-stopped
+    networks: [outbound]
+    volumes: [*workspace-volume, *backup-volume]
+    security_opt: [no-new-privileges:true, seccomp=./seccomp_profile.json]
+    shm_size: 1gb
+    mem_limit: ${RADAR_COLLECTOR_MEMORY:-6g}
+    cpus: ${RADAR_COLLECTOR_CPUS:-3}
+    stop_grace_period: 120s
+    command: [radar, worker, --watch, --name, hosting-worker]
+    healthcheck:
+      test: [CMD, python, /opt/radar/worker_healthcheck.py]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+  scheduled:
+    <<: *common
+    profiles: [jobs]
+    image: ${RADAR_WEB_IMAGE:?Pin the validated web image}
+    environment:
+      <<: *environment
+      RADAR_REQUIRE_COLLECTION: "1"
+    networks: [outbound]
+    mem_limit: 512m
+    cpus: 0.5
+    # This process coordinates a batch; it does not serve the image's HTTP port.
+    healthcheck: {disable: true}
+    stop_grace_period: 120s
+    command: [/opt/radar/bin/weekly-scan, --due, --external-worker]
+  review:
+    <<: *common
+    profiles: [jobs]
+    image: ${RADAR_WEB_IMAGE:?Pin the validated web image}
+    network_mode: none
+    mem_limit: 512m
+    cpus: 0.5
+    healthcheck: {disable: true}
+    command: [python, /opt/radar/maintenance.py, review]
+  backup:
+    <<: *common
+    profiles: [jobs]
+    image: ${RADAR_WEB_IMAGE:?Pin the validated web image}
+    environment:
+      <<: [*environment, *backup-environment]
+    network_mode: none
+    mem_limit: 512m
+    cpus: 0.5
+    healthcheck: {disable: true}
+    command: [radar, backup]
+    volumes: [*workspace-volume, *backup-volume]
+secrets:
+  preparation_gateway_token:
+    file: ${RADAR_GATEWAY_TOKEN_FILE:?Set a private secret file; empty file allowed only when preparation is disabled}
+networks:
+  frontend: {internal: true}
+  outbound: {}
+volumes:
+  proxy_data: {}
+  proxy_config: {}

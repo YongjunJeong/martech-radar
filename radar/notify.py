@@ -71,12 +71,13 @@ def notify_new_signals(store: Store, language: str | None = None,
     webhook = webhook if webhook is not None else notify_cfg.webhook
     t = translator(language)
 
-    wanted = set(notify_cfg.kinds) & set(sig.PRIORITY)
-    unknown = set(notify_cfg.kinds) - set(sig.PRIORITY)
+    configured = {sig.LEGACY_KINDS.get(k, k) for k in notify_cfg.kinds}
+    wanted = configured & set(sig.PRIORITY)
+    unknown = configured - set(sig.PRIORITY)
     if unknown:
         say(f"  [notify] ignoring unknown kinds: {sorted(unknown)}")
 
-    already = store.notified_keys()
+    already = {sig.normalize_key(k) for k in store.notified_keys()}
     found = [s for s in sig.all_signals(store, language=language)
              if s.kind in wanted and signal_key(s) not in already]
     report: dict[str, Any] = {"pending": len(found), "sent": 0}
@@ -90,10 +91,11 @@ def notify_new_signals(store: Store, language: str | None = None,
         report["error"] = "no webhook configured"
         return report
 
+    delivered = found[:100] if notify_cfg.format == "json" else found[:max(1, notify_cfg.max_items)]
     if notify_cfg.format == "json":
-        payload: dict[str, Any] = {"signals": [s.as_dict() for s in found[:100]]}
+        payload: dict[str, Any] = {"signals": [s.as_dict() for s in delivered]}
     else:
-        payload = _slack_payload(found, t, notify_cfg.max_items)
+        payload = _slack_payload(found, t, max(1, notify_cfg.max_items))
 
     send = transport or _post_json
     try:
@@ -105,8 +107,8 @@ def notify_new_signals(store: Store, language: str | None = None,
 
     # Recorded only now: a failed delivery above stays pending.
     store.record_notified(
-        [(signal_key(s), s.kind, s.target_id) for s in found],
+        [(signal_key(s), s.kind, s.target_id) for s in delivered],
         sent_at=datetime.now(UTC).isoformat())
-    report["sent"] = len(found)
-    say(f"  [notify] sent {len(found)} new signal(s)")
+    report["sent"] = len(delivered)
+    say(f"  [notify] sent {len(delivered)} new signal(s)")
     return report

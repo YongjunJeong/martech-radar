@@ -2,18 +2,22 @@
 {% from "_macros.html" import state_chip %}
 {% block title %}{{ c.company }} — Deal Radar{% endblock %}
 {% block content %}
+{% if story %}<a class="back-to-companies" href="/?status={{ story.decision.view }}{% if story.filter_query is defined %}{% if story.filter_query %}&amp;{{ story.filter_query }}{% endif %}{% else %}{% if story.solution_type %}&amp;solution_type={{ story.solution_type }}{% endif %}{% if story.observation %}&amp;observation={{ story.observation }}{% endif %}{% endif %}">← 기업 목록</a>{% endif %}
+{% if story and story.industry_filter_label %}<p class="industry-scope-note">목록에서 선택한 업종: {{ story.industry_filter_label }}</p>{% endif %}
 <h1>{{ c.company }}
   {% if c.company_en %}<span class="muted">{{ c.company_en }}</span>{% endif %}</h1>
 <p class="lede">
   <a href="/companies?industry={{ c.industry }}">{{ c.industry_label }}</a>
-  {% if c.tier %} · {{ c.tier }}{% endif %}
+  {% if c.tier and lang != 'ko' %} · {{ c.tier }}{% endif %}
   {% if not c.enabled %} · <span class="chip warn">{{ t('companies.chip.paused') }}</span>{% endif %}
   · {% for u in c.urls %}<a class="url" href="{{ u }}" rel="noreferrer noopener" target="_blank">{{ u }}</a>{% endfor %}
 </p>
-{% if c.note %}<p class="note">{{ c.note }}</p>{% endif %}
+{% if preparation_enabled and not story %}<div class="prep-entry"><div><strong>이 기업에 제안할 내용을 준비하세요</strong><span>회사 조사·추천 → 유즈케이스 선택 → 제안서·메일</span></div><a class="pill" href="/companies/{{ c.id }}/prepare">제안 준비하기 →</a></div>{% endif %}
 
+
+{% if not story %}
 <div class="actions">
-  <a class="pill" href="/companies/{{ c.id }}/brief">{{ t('company.brief') }}</a>
+  <a class="pill" href="/companies/{{ c.id }}/brief">{{ '미팅 준비 요약' if lang == 'ko' else t('company.brief') }}</a>
   {% if c.enabled %}
   <form method="post" action="/manage/scan">
     <input type="hidden" name="id" value="{{ c.id }}">
@@ -22,7 +26,18 @@
   </form>
   {% endif %}
 </div>
+{% include "_policy_reference.html" %}
+{% endif %}
 
+{% if story %}
+{% if story.observation %}<div class="solution-filter-notice"><span><strong>{{ story.scope_label }}</strong> 조건에 맞는 솔루션의 상태와 관측입니다. 아래 수집 원본은 기업 전체 기록입니다.</span><a href="/companies/{{ c.id }}">전체 솔루션 보기</a></div>{% elif story.solution_type %}<div class="solution-filter-notice"><span><strong>{{ story.solution_type_label }}</strong> 기준의 상태와 변화입니다. 아래 수집 원본은 기업 전체 기록입니다.</span><a href="/companies/{{ c.id }}">전체 유형 보기</a></div>{% endif %}
+{% include "_sales_company.html" %}
+{% include "_policy_reference.html" %}
+<details class="technical"><summary>수집 운영 · 원본 이력 보기</summary>
+{% if c.enabled %}<form method="post" action="/manage/scan" class="actions"><input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="scope" value="{{ c.id }}"><button type="submit" class="secondary">{{ t('company.scan_now') }}</button></form>{% endif %}
+<p class="period-note">변화 분석에는 {{ analysis_since or '전체 이력' }}부터의 관측을 사용합니다. 아래 원본 수집 목록에는 보존된 과거 기록이 포함될 수 있습니다.</p>
+{% if c.note %}<p class="note">{{ c.note }}</p>{% endif %}
+{% endif %}
 {% if c.off_domain %}
   <p class="empty warn">{{ t('company.off_domain', host=c.landing|join(', ')) }}</p>
 {% elif c.host_shift %}
@@ -137,4 +152,5 @@
   {% endfor %}
   </tbody>
 </table>
+{% if story %}</details>{% endif %}
 {% endblock %}

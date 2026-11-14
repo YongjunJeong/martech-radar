@@ -14,23 +14,38 @@ radar.toml
 
 # Build output from `pip install -e .`
 *.egg-info/
+build/
+dist/
 
-# Local credentials, exports and generated artifacts.
+# Host-specific deployment inputs, kept outside release artifacts.
+deploy/hosting.env
+
+# Local credentials and exports (never distribute a CLI login or a live workspace).
 .env
 .env.*
 !.env.example
+.codex/
+.claude/
+secrets/
 *.pem
 *.key
-*.db
-*.db-*
 *.sqlite
 *.sqlite3
-*.sqlite3-*
+*.db
+*.db-wal
+*.db-shm
 *.log
-*.mp4
-*.webm
-.DS_Store
-build/
-dist/
-# Workspace-specific fingerprints can encode private observations.
-/fingerprints/
+
+# Deployment-specific incident reports and dated review units stay on the host.
+# Reusable reviewers and documentation are published; these files may be in use.
+/docs/*_20??-??-??.md
+/deploy/radar-review-*.service
+/deploy/radar-review-*.timer
+/deploy/radar-policy-reference.service
+/deploy/radar-policy-reference.timer
+/docs/HOME_PERFORMANCE.md
+/docs/HOSTING_READINESS.md
+/docs/RUST_READINESS.md
+
+# Release artifacts are rebuilt from the reviewed source tree.
+/release/

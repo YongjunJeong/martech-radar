@@ -13,6 +13,7 @@ the same protection a bot wall already gets.
 from __future__ import annotations
 
 import time
+import asyncio
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
@@ -54,6 +55,7 @@ class RobotsCache:
     user_agent: str = "*"
     memory: object | None = None
     _entries: dict[str, _Entry] = field(default_factory=dict)
+    _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
 
     @staticmethod
     def origin_of(url: str) -> str:
@@ -61,6 +63,12 @@ class RobotsCache:
         return f"{parts.scheme}://{parts.netloc}"
 
     async def _load(self, origin: str, fetch) -> _Entry:
+        # Concurrent pages on the same origin share one fetch. Different sites
+        # remain independent; cancellation releases the lock for the next waiter.
+        async with self._locks.setdefault(origin, asyncio.Lock()):
+            return await self._load_once(origin, fetch)
+
+    async def _load_once(self, origin: str, fetch) -> _Entry:
         cached = self._entries.get(origin)
         if cached and (time.monotonic() - cached.fetched_at) < CACHE_SECONDS:
             return cached

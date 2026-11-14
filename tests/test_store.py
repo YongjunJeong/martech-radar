@@ -198,7 +198,7 @@ def test_vendor_counts_count_companies_not_scans(store, registry):
     run = store.start_run(2)
     for target_id, url in (("shop", "https://shop.example/"),
                            ("shop", "https://shop.example/category/001"),
-                           ("other_shop", "https://other.example/")):
+                           ("cm29", "https://www.29cm.co.kr/")):
         scan_id = store.record_scan(run, target_id, result(
             url=url, network={"hosts": ["sdk.iad-03.braze.com"]}))
         store.record_detections(scan_id, det.detect(store.load_evidence(scan_id), registry))
@@ -266,6 +266,77 @@ def test_redetect_reapplies_current_privacy_rules_to_old_evidence(store, registr
     cleaned = json.dumps(store.load_evidence(scan_id))
     assert "b9a58994" not in cleaned
     assert "ab.storage.deviceId.{uuid}" in cleaned
+
+
+@pytest.mark.parametrize('keep_evidence', [True, False])
+def test_restatus_publishes_one_status_and_reason(store, keep_evidence):
+    run = store.start_run(1)
+    scan_id = store.record_scan(run, 'shop', result(), keep_evidence=keep_evidence)
+    store.restatus_scan(scan_id, ev.STATUS_PARTIAL, 'incomplete observation')
+    row = store.scans_for('shop')[0]
+    assert (row['status'], row['block_marker']) == (ev.STATUS_PARTIAL, 'incomplete observation')
+    stored = store.load_evidence(scan_id)
+    if keep_evidence:
+        assert stored['scan']['status'] == row['status']
+        assert stored['scan']['block_marker'] == row['block_marker']
+    else:
+        assert stored is None
+
+
+def _old_private_thin_result():
+    raw = result(storage={'local_storage_keys': [
+        'ab.storage.deviceId.b9a58994-a795-4f4d-b145-1023fd6a1e11']})
+    raw['scan']['title'] = '시스템 점검 안내'
+    raw['counts'] = {'requests': 3, 'scripts': 0, 'window_keys': 0,
+                     'cookie_names': 0, 'csp_hosts': 0, 'identifiers': 0,
+                     'third_party_domains': 0}
+    return raw
+
+
+def test_redetect_combines_privacy_and_status_into_one_blob_write(store, registry, monkeypatch):
+    from radar import store as storage
+
+    run = store.start_run(1)
+    scan_id = store.record_scan(run, 'shop', _old_private_thin_result())
+    original = storage._compress_evidence
+    compressed = []
+
+    def measured(payload):
+        compressed.append(payload)
+        return original(payload)
+
+    monkeypatch.setattr(storage, '_compress_evidence', measured)
+    stats = redetect(store, registry)
+    assert stats['scrubbed'] == stats['restatused'] == 1
+    assert len(compressed) == 1
+    stored = store.load_evidence(scan_id)
+    assert stored['scan']['status'] == ev.STATUS_THIN
+    assert 'b9a58994' not in json.dumps(stored)
+
+
+def test_redetect_failure_rolls_back_status_evidence_and_detections(store, registry, monkeypatch):
+    run = store.start_run(1)
+    scan_id = store.record_scan(run, 'shop', _old_private_thin_result())
+    store.record_detections(scan_id, det.detect(
+        result(network={'hosts': ['sdk.iad-03.braze.com']}), registry))
+    before_detections = [dict(r) for r in store.detections_for(scan_id)]
+    assert before_detections
+    before = store.load_evidence(scan_id)
+    revision = store.data_state()
+    original = store.record_detections
+
+    def fail_after_write(*args):
+        original(*args)
+        raise RuntimeError('simulated detection storage failure')
+
+    monkeypatch.setattr(store, 'record_detections', fail_after_write)
+    with pytest.raises(RuntimeError, match='simulated'):
+        redetect(store, registry)
+    assert store.load_evidence(scan_id) == before
+    assert [dict(r) for r in store.detections_for(scan_id)] == before_detections
+    assert store.scans_for('shop')[0]['status'] == ev.STATUS_OK
+    assert store.data_state() == revision
+    assert not store.conn.in_transaction
 
 
 def test_a_watchlist_survives_a_round_trip_through_yaml(store, tmp_path):
@@ -440,8 +511,12 @@ def test_backup_is_a_usable_copy_and_old_snapshots_are_pruned(tmp_path):
     from radar import workspace
     from radar.cli import main
     try:
-        assert main(["--home", str(tmp_path), "backup", "--keep", "2"]) == 0
+        assert main(["--home", str(tmp_path), "backup", "--db", str(tmp_path / 'radar.db'), "--keep", "2"]) == 0
     finally:
         workspace.set_home(None)   # --home pins the process; do not leak it
     kept = sorted(p.name for p in folder.glob("radar-*.db"))
-    assert len(kept) == 2 and "radar-2026-09-01-0245.db" not in kept
+    assert len(kept) == 3, 'legacy single-file snapshots are preserved'
+    from radar.recovery import verify
+    archives = list(folder.glob('radar-*/manifest.json'))
+    assert len(archives) == 1
+    assert verify(archives[0].parent)['database']['counts']['target'] == 1

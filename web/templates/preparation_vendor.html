@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ c.company }} · 제안 준비 — MarTech Radar{% endblock %}
+{% block content %}
+{% set busy = saved.job and saved.job.state == 'running' %}
+{% set ready = d.usecases and 'usecases' not in d.stale %}
+<div class="prep-heading"><div><a class="back-to-companies" href="/companies/{{ c.id }}">← 기업 관측으로 돌아가기</a><h1>{{ c.company }} <span class="muted">제안 준비</span></h1><p class="lede">회사에 맞는 추천을 고르면 제안서와 첫 연락 메일을 함께 만듭니다.</p></div><span class="chip">저장된 기준 · {{ d.sender.name or '벤더 중립' }}</span></div>
+{% if error %}<p class="prep-alert" role="alert">{{ error }}</p>{% endif %}
+{% if saved.job and saved.job.state == 'failed' %}<p class="prep-alert" role="alert">{{ saved.job.error }} 이전에 완성된 내용은 유지됩니다.</p>{% endif %}
+{% if busy %}<p class="prep-progress" role="status" data-prep-poll="/companies/{{ c.id }}/prepare/status">{{ steps.get(saved.job.step, '제안 준비') }} 진행 중 · 완료되면 화면이 갱신됩니다. 다른 화면을 보셔도 작업은 계속됩니다.</p>{% endif %}
+<div class="prep-auto" data-preparation>
+<section class="prep-stage" id="research"><div class="prep-stage-head"><div><small>1 · 회사 조사</small><h2>이 회사에는 어떤 제안이 맞을까요?</h2></div><form id="sender-form" method="post" action="/companies/{{ c.id }}/prepare/generate" data-generate-form data-sender-form><input type="hidden" name="revision" value="{{ saved.revision }}"><input type="hidden" name="step" value="usecases"><button type="submit" {% if busy %}disabled{% endif %}>{{ '다시 조사·추천받기' if d.usecases else '회사 조사·추천받기' }}</button></form></div>
+<fieldset class="prep-sender" {% if busy %}disabled{% endif %}>
+<label>제안할 벤더<select name="vendor" form="sender-form" data-sender-vendor>{% for key,label in sender_vendors.items() %}<option value="{{ key }}" {% if d.sender.vendor==key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+<label data-sender-custom {% if d.sender.vendor != 'custom' %}hidden{% endif %}>솔루션 이름<input name="sender_name" form="sender-form" value="{{ d.sender.name if d.sender.vendor=='custom' else '' }}" maxlength="80"></label>
+<details data-sender-context {% if d.sender.vendor == 'neutral' %}hidden{% endif %}><summary>솔루션 소개·제안 조건 추가 <span class="muted">선택</span></summary><textarea name="sender_context" form="sender-form" rows="3" maxlength="4000" placeholder="소개 문구, 제안 가능한 기능, 제외할 채널이나 기능 등을 입력하세요.">{{ d.sender.context }}</textarea><p class="note">추천·문서 생성에 함께 반영됩니다. 입력 정보가 없는 제품 기능은 적용 가능성을 확인할 제안으로 작성합니다.</p></details>
+</fieldset>
+<noscript><style>[data-sender-custom][hidden],[data-sender-context][hidden]{display:block}</style></noscript>
+<p class="note">중립으로 시작하거나 판매할 솔루션을 선택하세요. 벤더를 선택해도 고객의 실제 문제나 제품 지원 범위를 단정하지 않습니다.</p>
+<p class="prep-progress" data-sender-dirty role="status" hidden>제안 기준이 바뀌었습니다. ‘다시 조사·추천받기’를 눌러 새 기준으로 추천받아 주세요. 아래는 이전에 저장된 결과입니다.</p>
+{% if not d.research %}<p class="note">공식 홈페이지와 공개 마케팅 자료를 조사하고, Marketing KB에서 적합한 유즈케이스를 찾습니다. 회사의 방향을 확인하기 어려우면 유사 업종 사례를 바탕으로 추천합니다.</p>
+{% else %}
+{% if d.research.state == 'found' %}<p class="note">공개 자료 {{ d.research.sources|length }}건을 참고했습니다. 자료에 나온 활동과 이를 바탕으로 제안하는 가설을 구분해 보세요.</p><div class="prep-research-grid">{% for source in d.research.sources %}<article><strong>{{ source.title }}</strong><p>{{ source.text }}</p><small>{{ '발행 ' ~ source.published_at if source.published_at else '발행일 확인 안 됨' }} · <a href="#source-{{ source.id }}" class="prep-source-link">[{{ source.id }}] 근거 보기</a></small></article>{% endfor %}</div>
+{% elif d.research.state == 'unavailable' %}<p class="prep-progress">웹 조사를 완료하지 못해 유사 업종의 KB 사례로 추천했습니다. 회사의 실제 마케팅 방향을 확인한 결과는 아닙니다. 필요하면 다시 조사할 수 있습니다.</p>
+{% else %}<p class="prep-progress">회사의 마케팅 방향을 뒷받침할 공개 근거가 부족해 유사 업종의 KB 사례로 추천했습니다.</p>{% endif %}
+<p class="note">조사 시점 {{ d.research.checked_at[:10] }} · 공개 자료의 발행 시점과 현재 운영은 다를 수 있습니다.</p>
+{% endif %}
+</section>
+<section class="prep-stage" id="usecases"><div class="prep-stage-head"><div><small>2 · 추천 선택</small><h2>메일에서 제안할 유즈케이스를 골라 주세요</h2></div></div>
+{% if d.usecases and not ready %}<p class="prep-alert">이전 기준의 초안입니다. 회사 조사·추천을 다시 진행해 주세요. 이전 내용은 저장 이력에서 내려받을 수 있습니다.</p>{% endif %}
+{% if ready %}
+<p class="note">회사·사업 적합성과 근거를 고려한 추천 순서입니다. 구매 가능성 순위는 아닙니다. 최대 3개를 선택하세요.</p>
+<form method="post" action="/companies/{{ c.id }}/prepare/generate" data-selection-form data-generate-form>
+<input type="hidden" name="revision" value="{{ saved.revision }}"><input type="hidden" name="step" value="package">
+<fieldset class="prep-candidates prep-auto-candidates" {% if busy %}disabled{% endif %}>
+{% for uc in d.usecases %}<article class="prep-candidate"><label class="prep-check"><input type="checkbox" name="selected" value="{{ loop.index0 }}" {% if loop.index0 in d.selected_indices %}checked{% endif %}><span><small class="prep-rank">{{ '우선 추천' if loop.first else '추천 ' ~ loop.index }}</small><strong>{{ uc.title }}</strong></span></label>
+<span class="chip">{{ '회사 공개 자료 참고' if uc.basis == 'company_research' else '유사 업종 기반 제안' }}</span><p class="prep-reason">{{ uc.reason }}</p>
+<details><summary>실행 흐름·확인할 조건 보기</summary><div class="prep-text">{{ uc.text }}</div></details>
+<div class="prep-refs">{% for id in uc.source_ids %}<a href="#source-{{ id }}">[{{ id }}] {{ '회사 자료' if id.startswith('W') else 'KB 사례' }}</a>{% endfor %}</div></article>{% endfor %}
+</fieldset><div class="prep-save"><button type="submit" {% if busy %}disabled{% endif %}>선택 완료 · 제안서와 메일 만들기</button><small data-selection-count role="status">1~3개를 선택해 주세요.</small></div>
+</form>
+{% else %}<div class="prep-empty">‘회사 조사·추천받기’를 누르면 추천 이유와 실행 시나리오가 표시됩니다. 목표나 채널을 미리 정하지 않아도 됩니다.</div>{% endif %}
+</section>
+<section class="prep-stage" id="documents"><div class="prep-stage-head"><div><small>3 · 제안서와 메일</small><h2>제안서와 첫 연락 메일</h2></div></div>
+{% if d.proposal and 'proposal' not in d.stale and 'email' not in d.stale and ready %}
+<p class="note">선택한 유즈케이스 · {% for i in d.selected_indices %}{{ d.usecases[i].title }}{{ ' · ' if not loop.last }}{% endfor %}</p>
+{% if busy %}<p class="note">아래는 이전에 완성된 내용입니다. 새 작업이 끝나면 최신 결과로 바뀝니다.</p>{% endif %}
+<div class="prep-output-grid"><article><div class="prep-stage-head"><h3>제안서</h3>{% if not busy %}<a href="/companies/{{ c.id }}/prepare/print" target="_blank" rel="noopener">인쇄 / PDF 저장</a>{% endif %}</div><div class="prep-text prep-output">{{ d.proposal }}</div>{% if not busy %}<a href="/companies/{{ c.id }}/prepare/export/proposal">텍스트 내려받기</a>{% endif %}</article>
+<article><div class="prep-stage-head"><h3>첫 연락 메일</h3></div><strong id="email-subject">{{ d.email.subject }}</strong><div id="email-text" class="prep-text prep-output">{{ d.email.text }}</div>{% if not busy %}<div class="prep-save"><button type="button" class="secondary" data-copy-email>제목·본문 복사</button><a href="/companies/{{ c.id }}/prepare/export/email">텍스트 내려받기</a><span role="status" id="copy-status"></span></div>{% endif %}<p class="note">복사 후 메일 서비스에서 수신자와 발신자 서명을 확인해 주세요. 이 화면에서는 발송되지 않습니다.</p></article></div>
+{% else %}<div class="prep-empty">유즈케이스를 선택하고 ‘선택 완료’를 누르면 제안서와 메일이 이곳에 함께 표시됩니다.</div>{% endif %}
+</section>
+{% if d.sources %}<details class="prep-stage prep-sources"><summary>추천에 사용한 출처 {{ d.sources|length }}건</summary>{% for source in d.sources %}<details id="source-{{ source.id }}"><summary>[{{ source.id }}] {{ source.title }} <span class="muted"> · {{ source.kind }}</span></summary><div class="prep-text">{{ source.text }}</div>{% if source.excerpt %}<blockquote>{{ source.excerpt }}</blockquote>{% endif %}{% for link in source.links %}<p><a href="{{ link.url }}" target="_blank" rel="noreferrer noopener">{{ link.title }} ↗</a></p>{% endfor %}</details>{% endfor %}</details>{% endif %}
+{% if saved.history %}<details class="prep-stage"><summary>이전 결과 내려받기</summary><p class="note">최근 10개 저장 이력입니다. 다시 추천받거나 생성해도 이전 결과는 보관됩니다.</p>{% for item in saved.history %}<a class="prep-history-link" href="/companies/{{ c.id }}/prepare/history/{{ item.revision }}">v{{ item.revision }} · {{ item.display_at }} KST</a>{% endfor %}</details>{% endif %}
+</div>
+<script src="/static/preparation_auto.js?v=20261026-vendor-1" defer></script>
+{% endblock %}

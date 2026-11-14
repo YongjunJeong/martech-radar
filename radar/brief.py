@@ -1,8 +1,14 @@
 """Compact factual briefs and the weekly digest.
 
-Briefs summarize stored observations and their evidence for the CLI and
-dashboard. Unobservable companies produce an explicit refusal instead of
-unsupported claims.
+The split matters for cost. Assembling what we observed is deterministic
+work that Python does for free; only the writing needs a model. So this
+module hands the skill a short, factual brief instead of making it read and
+summarise several megabytes of JSON.
+
+Everything here is an observation with a number attached. Interpretation —
+what it means, what to say about it — is deliberately left to the skill,
+because a tool that editorialises quietly becomes a tool that asserts things
+nobody verified.
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, UTC
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from . import config as cfg
 from . import signals as sig
@@ -21,12 +28,19 @@ CATEGORY_LABEL = {
     "analytics": "애널리틱스", "attribution": "어트리뷰션",
     "advertising": "광고", "platform": "플랫폼·인프라",
 }
-CATEGORY_ORDER = ["engagement", "experimentation", "analytics",
-                  "attribution", "advertising", "platform"]
+CATEGORY_ORDER = sorted(CATEGORY_LABEL)
 
 
 def _fmt_date(value: str | None) -> str:
-    return (value or "")[:10]
+    if not value:
+        return ""
+    try:
+        stamp = datetime.fromisoformat(value)
+        settings = cfg.load()
+        zone = settings.analysis.timezone if settings.analysis.since else settings.scan.timezone
+        return stamp.astimezone(ZoneInfo(zone)).date().isoformat() if stamp.tzinfo else value[:10]
+    except ValueError:
+        return value[:10]
 
 
 def company_brief(store: Store, target_id: str,
@@ -45,6 +59,11 @@ def company_brief(store: Store, target_id: str,
     lines: list[str] = []
     name = target["company"] + (f" ({target['company_en']})" if target["company_en"] else "")
     lines.append(f"# {name} — {target['industry']}")
+
+    if settings.analysis.since:
+        lines.append(f"분석 범위: {settings.analysis.since}부터 ({settings.analysis.timezone}). 첫 정상 관측은 기준점이며 도입일이 아닙니다."
+                      if (language or settings.ui.language) == "ko" else
+                      f"Analysis since {settings.analysis.since} ({settings.analysis.timezone}); first observation is a baseline, not an adoption date.")
 
     if not judged:
         cover = store.coverage(target_id).get(target_id, {})
@@ -79,13 +98,8 @@ def company_brief(store: Store, target_id: str,
     maturity = sig.maturity_of(store, target_id, stack)
     changes = {c.fingerprint_id: c
                for c in sig.changes_for(store, target_id, timeline_data)}
-    engagement = [r for r in direct if r["category"] == sig.ENGAGEMENT]
-    # An engagement platform seen until recently is not "never had one".
-    # Saying greenfield here would put a falsehood in front of a prospect
-    # who, a few weeks ago, demonstrably ran Braze.
     gone = sorted((c for c in changes.values()
-                   if c.category == sig.ENGAGEMENT
-                   and c.state in (sig.STATE_REMOVAL_CANDIDATE, sig.STATE_REMOVED)),
+                   if c.state in (sig.STATE_REMOVAL_CANDIDATE, sig.STATE_REMOVED)),
                   key=lambda c: c.name)
 
     lines += [
@@ -97,29 +111,14 @@ def company_brief(store: Store, target_id: str,
     if site is not None and site.shift is not None:
         lines.append(t("brief.host_shift", run=site.shift.run_id,
                        previous=site.shift.previous, current=site.shift.current))
-    lines += ["", t("brief.engagement")]
-    if engagement:
-        for row in engagement:
-            change = changes.get(row["fingerprint_id"])
-            state = (f" — {change.state}, {change.run_streak}/{len(judged)}") if change else ""
-            lines.append(f"- **{row['name']}** (점수 {row['score']}, "
-                         f"{row['direct_layers']}){state}")
-    elif gone:
-        for change in gone:
-            lines.append(t("brief.engagement.gone", name=change.name,
-                           state=change.state, since=change.since_run,
-                           streak=change.run_streak, judged=len(comparable)))
-    else:
-        lines.append(t("brief.engagement.none", judged=len(comparable)))
-
     lines += ["", t("brief.stack")]
     grouped: dict[str, list[str]] = {}
     for row in direct:
         grouped.setdefault(row["category"], []).append(row["name"])
-    for category in CATEGORY_ORDER:
+    for category in sorted(grouped):
         names = grouped.get(category)
         if names:
-            lines.append(f"- {t('category.' + category)} ({len(names)}): "
+            lines.append(f"- {(t('category.' + category) if category in CATEGORY_ORDER else category)} ({len(names)}): "
                          + ", ".join(sorted(names)))
 
     moved = [c for c in changes.values()
@@ -140,24 +139,35 @@ def company_brief(store: Store, target_id: str,
             lines.append(f"- {ident['kind']}: `{ident['value']}`")
 
     lines += ["", t("brief.facts"), "", t("brief.facts.rule")]
-    if engagement:
-        pass
-    elif gone:
-        for change in gone:
-            lines.append(t("brief.fact.engagement_gone", name=change.name,
-                           since=change.since_run, streak=change.run_streak))
-    else:
-        lines.append(t("brief.fact.no_engagement", judged=len(comparable)))
-    lines.append(t("brief.fact.advertising", n=maturity.advertising))
-    lines.append(t("brief.fact.analytics", n=maturity.analytics))
-    if maturity.attribution:
-        lines.append(t("brief.fact.attribution", n=maturity.attribution))
-    if maturity.experimentation:
-        lines.append(t("brief.fact.experimentation", n=maturity.experimentation))
-    else:
-        lines.append(t("brief.fact.no_experimentation"))
+    lines += citable_facts(t, direct, gone, maturity, len(comparable))
 
     return "\n".join(lines), True
+
+
+def citable_facts(t, direct_stack: list[dict], gone: list[sig.Change],
+                  maturity: sig.Maturity, judged_runs: int) -> list[str]:
+    """The sentences an email may contain, from observation alone.
+
+    Shared by the brief and the call list so the two can never disagree
+    about what is allowed to be said.
+    """
+    facts: list[str] = []
+    grouped: dict[str, list[str]] = {}
+    for row in direct_stack:
+        grouped.setdefault(row["category"], []).append(row["name"])
+    for category, names in sorted(grouped.items()):
+        facts.append(t("brief.fact.category", category=(t("category." + category)
+                                                       if category in CATEGORY_ORDER else category),
+                       n=len(names), names=", ".join(sorted(names))))
+    for change in gone:
+        facts.append(t("brief.fact.absent", name=change.name, since=change.since_run,
+                       streak=change.run_streak))
+    dead = [r["name"] for r in direct_stack if "sunset" in r["name"].lower()]
+    if dead:
+        facts.append(t("brief.fact.experimentation_sunset", n=len(dead), names=", ".join(dead)))
+    if not direct_stack:
+        facts.append(t("brief.fact.no_tools"))
+    return facts
 
 
 def weekly_digest(store: Store, language: str | None = None) -> str:
@@ -165,8 +175,8 @@ def weekly_digest(store: Store, language: str | None = None) -> str:
     runs = [dict(r) for r in store.runs(limit=2)]
     coverage = store.coverage()
     found = sig.all_signals(store, language=language)
-    quiet = sig.quiet_greenfield(store, language)
-    unjudged = [c for c in coverage.values() if not c["judged"]]
+    active_ids = {r["id"] for r in store.targets(enabled_only=True)}
+    unjudged = [c for tid, c in coverage.items() if tid in active_ids and not c["judged"]]
 
     lines = ["# " + t("digest.title",
                        date=datetime.now(UTC).date().isoformat()), ""]
@@ -180,9 +190,10 @@ def weekly_digest(store: Store, language: str | None = None) -> str:
         # A filtered run (`--only`) covers a handful of targets. Reporting
         # just its scan count makes a weekly digest read as though the whole
         # watchlist collapsed to one company.
-        watchlist_size = len(store.targets())
+        watchlist_size = len(active_ids)
         covered = store.conn.execute(
-            "SELECT COUNT(DISTINCT target_id) AS n FROM scan WHERE run_id = ?",
+            "SELECT COUNT(DISTINCT s.target_id) AS n FROM scan s "
+            "JOIN target t ON t.id=s.target_id WHERE s.run_id = ? AND t.enabled=1",
             (latest["id"],)).fetchone()["n"]
         partial = ("" if covered >= watchlist_size
                    else t("digest.partial", total=watchlist_size, covered=covered))
@@ -196,7 +207,7 @@ def weekly_digest(store: Store, language: str | None = None) -> str:
         if partial:
             lines += [t("digest.partial_note"), ""]
 
-    changed = [s for s in found if s.kind != sig.KIND_GREENFIELD]
+    changed = found
     lines += [t("digest.changes")]
     if changed:
         for signal in changed:
@@ -205,16 +216,6 @@ def weekly_digest(store: Store, language: str | None = None) -> str:
     else:
         lines.append(t("digest.no_changes"))
 
-    greenfield = [s for s in found if s.kind == sig.KIND_GREENFIELD]
-    lines += ["", t("digest.greenfield", n=len(greenfield))]
-    for signal in sorted(greenfield, key=lambda s: -(s.maturity.score if s.maturity else 0)):
-        score = signal.maturity.score if signal.maturity else 0
-        lines.append(f"- {signal.company} ({signal.industry}) — "
-                     + t("signals.quiet.score", score=score) + f", {signal.detail}")
-
-    if quiet:
-        lines += ["", t("digest.quiet"),
-                  "- " + ", ".join(f"{q['company']}({q['maturity']['score']})" for q in quiet)]
     if unjudged:
         lines += ["", t("digest.unjudged"),
                   "- " + ", ".join(sorted(c["target_id"] for c in unjudged))]
@@ -232,9 +233,10 @@ def weekly_digest(store: Store, language: str | None = None) -> str:
 
 def digest_stats(store: Store) -> dict[str, Any]:
     found = sig.all_signals(store)
+    coverage = store.coverage()
     return {
         "signals": len(found),
-        "changes": sum(1 for s in found if s.kind != sig.KIND_GREENFIELD),
-        "greenfield": sum(1 for s in found if s.kind == sig.KIND_GREENFIELD),
-        "unjudged": sum(1 for c in store.coverage().values() if not c["judged"]),
+        "changes": len(found),
+        "unjudged": sum(1 for r in store.targets(enabled_only=True)
+                        if not coverage.get(r["id"], {}).get("judged")),
     }

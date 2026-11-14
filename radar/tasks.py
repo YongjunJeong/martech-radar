@@ -22,6 +22,7 @@ from . import config as cfg
 from . import hygiene
 from . import notify as ntf
 from . import workspace
+from . import recovery
 from .registry import Registry
 from .store import Store
 
@@ -30,17 +31,13 @@ Say = Callable[[str], None]
 KINDS = ("digest", "redetect", "notify", "hygiene", "backup")
 
 
-def backup_snapshot(store: Store, folder: Path | None = None, keep: int = 14) -> dict[str, Any]:
-    """Snapshot the database into `folder`, keeping the newest `keep`."""
-    folder = folder or workspace.path("backups")
-    stamp = datetime.now().astimezone().strftime("%Y-%m-%d-%H%M")
-    dest = store.backup(folder / f"radar-{stamp}.db")
-    snapshots = sorted(folder.glob("radar-*.db"))
-    pruned = snapshots[:-keep] if keep > 0 and len(snapshots) > keep else []
-    for old in pruned:
-        old.unlink()
-    return {"path": str(dest), "size_mb": dest.stat().st_size / 1_000_000,
-            "kept": len(snapshots) - len(pruned), "pruned": len(pruned)}
+def backup_snapshot(store: Store, folder: Path | None = None, keep: int | None = None,
+                    *, max_gib=None, min_free_gib=None) -> dict[str, Any]:
+    """All operator entrypoints produce the same verified recovery archive."""
+    dest = recovery.configured_backup(workspace.home(), folder, database=store.path,
+                                     keep=keep, max_gib=max_gib, min_free_gib=min_free_gib)
+    size = sum(p.stat().st_size for p in dest.rglob('*') if p.is_file())
+    return {'path': str(dest), 'size_mb': size / 1_000_000}
 
 
 def _digest(store: Store, registry: Registry, params: dict, say: Say) -> str:
@@ -88,10 +85,8 @@ def _hygiene(store: Store, registry: Registry, params: dict, say: Say) -> str:
 
 
 def _backup(store: Store, registry: Registry, params: dict, say: Say) -> str:
-    keep = int(params.get("keep") or 14)
-    result = backup_snapshot(store, keep=keep)
-    return (f"backup written: {result['path']} ({result['size_mb']:.1f} MB) — "
-            f"{result['kept']} kept, {result['pruned']} pruned")
+    result = backup_snapshot(store, keep=params.get('keep'))
+    return f"verified backup written: {result['path']} ({result['size_mb']:.1f} MB)"
 
 
 _HANDLERS: dict[str, Callable[[Store, Registry, dict, Say], str]] = {

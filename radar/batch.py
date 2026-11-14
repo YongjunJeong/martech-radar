@@ -1,7 +1,7 @@
 """Scan the whole watchlist and persist the result.
 
 Every scan is recorded, including the failures. A blocked or timed-out visit
-is a fact about that week that change detection needs: without the failure rows,
+is a fact about that week that Phase 4 needs: without the failure rows,
 a vendor missing from three consecutive blocked scans is indistinguishable
 from a vendor that was removed.
 """
@@ -9,8 +9,11 @@ from a vendor that was removed.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from datetime import datetime, UTC
+import hashlib
+import asyncio
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, UTC, timedelta, date
+from zoneinfo import ZoneInfo
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -30,6 +33,20 @@ from .store import Store
 DEFAULT_CONCURRENCY = config.load().scan.concurrency
 
 ProgressFn = Callable[[str], None]
+
+
+class ExternalWorkerError(RuntimeError):
+    """Scheduled coordinator cannot hand work to a healthy worker."""
+
+
+def require_live_worker(store: Store) -> None:
+    try:
+        seen = json.loads(store.get_meta('worker_seen') or '{}')['at']
+        age = (datetime.now(UTC) - datetime.fromisoformat(seen)).total_seconds()
+        if not 0 <= age <= 120:
+            raise ValueError('stale heartbeat')
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ExternalWorkerError('Collection worker heartbeat is missing or stale; no inline browser fallback.') from exc
 
 
 @dataclass
@@ -103,34 +120,113 @@ def jobs_for(store: Store, target_ids: Iterable[str] | None = None,
             for r in rows for url in json.loads(r["urls_json"])]
 
 
+def weekly_due_date(target_id, url, latest, schedule, today, zone):
+    """Read-only projection shared by scheduling and sales guidance.
+
+    The persisted schedule may still precede the latest completed attempt.
+    Advance by whole weeks, preserving the assigned weekday.
+    """
+    if schedule is None:
+        offset = int.from_bytes(hashlib.sha256(f"{target_id}|{url}".encode()).digest()[:8], "big") % 7
+        due = today + timedelta(days=offset)
+        if latest and datetime.fromisoformat(latest).astimezone(zone).date() >= due:
+            due += timedelta(days=7)
+    else:
+        due = date.fromisoformat(schedule["next_due"])
+        if latest and latest != schedule["last_attempt"]:
+            attempted = datetime.fromisoformat(latest).astimezone(zone).date()
+            if attempted >= due:
+                due += timedelta(days=7 * ((attempted-due).days // 7 + 1))
+    return due
+
+
 def due_split(store: Store, jobs: list[Job],
               cadence: config.CadenceSettings | None = None,
-              now: datetime | None = None) -> tuple[list[Job], list[str]]:
+              now: datetime | None = None, *, audit: dict | None = None) -> tuple[list[Job], list[str]]:
     """Split jobs into (due now, target ids skipped as fresh).
 
-    Freshness is measured from the last *attempt*, whatever its status —
+    Day intervals follow the workspace calendar; hour intervals use elapsed time.
+    Freshness is measured per URL from the last *attempt*, whatever its status —
     a site that blocked us yesterday earned its full interval of quiet,
     not a faster retry. A target never scanned is always due.
     """
     cadence = cadence or config.load().cadence
     now = now or datetime.now(UTC)
-    last: dict[str, str] = {
-        row["target_id"]: row["latest"]
+    decisions = {(j.target_id, j.url): 'not_due' for j in jobs}
+    def publish():
+        if audit is not None:
+            audit.update(created_at=now.isoformat(), cadence=asdict(cadence), items=[
+                dict(target_id=tid, url=url, decision=reason)
+                for (tid, url), reason in decisions.items()])
+    zone = ZoneInfo(config.load().scan.timezone)
+    last = {
+        (row["target_id"], row["url"]): row["latest"]
         for row in store.conn.execute(
-            "SELECT target_id, MAX(started_at) AS latest FROM scan GROUP BY target_id")
+            "SELECT target_id, url, MAX(started_at) AS latest FROM scan GROUP BY target_id, url")
     }
     due: list[Job] = []
+    due_dates = {}
+    today = now.astimezone(zone).date()
+    if cadence.not_before and today < date.fromisoformat(cadence.not_before):
+        publish()
+        return [], list(dict.fromkeys(job.target_id for job in jobs))
     skipped: dict[str, None] = {}
     for job in jobs:
-        latest = last.get(job.target_id)
+        latest = last.get((job.target_id, job.url))
+        interval = cadence.tiers.get(job.tier or "", cadence.default)
+        if cadence.spread_weekly and str(interval).strip().lower() == "7d":
+            row = store.conn.execute("SELECT next_due,last_attempt FROM scan_schedule WHERE target_id=? AND url=?",
+                                     (job.target_id,job.url)).fetchone()
+            next_due = weekly_due_date(job.target_id, job.url, latest, row, today, zone)
+            store.conn.execute(
+                "INSERT INTO scan_schedule(target_id,url,next_due,last_attempt) VALUES (?,?,?,?) "
+                "ON CONFLICT(target_id,url) DO UPDATE SET next_due=excluded.next_due,last_attempt=excluded.last_attempt",
+                (job.target_id, job.url, next_due.isoformat(), latest))
+            if next_due <= today:
+                due.append(job)
+                due_dates[(job.target_id,job.url)] = next_due
+            else:
+                skipped[job.target_id] = None
+            continue
         if latest is None:
             due.append(job)
             continue
-        age = (now - datetime.fromisoformat(latest)).total_seconds()
-        if age >= cadence.seconds_for(job.tier):
+        previous = datetime.fromisoformat(latest)
+        interval = cadence.tiers.get(job.tier or "", cadence.default)
+        seconds = cadence.seconds_for(job.tier)
+        if str(interval).strip().lower().endswith("d"):
+            age = (now.astimezone(zone).date() - previous.astimezone(zone).date()).days
+            is_due = age >= seconds / 86400
+        else:
+            is_due = (now - previous).total_seconds() >= seconds
+        if is_due:
             due.append(job)
         else:
             skipped[job.target_id] = None
+    store.conn.commit()
+    active_jobs = {(r["target_id"],r["url"]) for r in store.conn.execute(
+        "SELECT target_id,url FROM job WHERE state IN ('pending','claimed')")}
+    already_queued = [j for j in due if (j.target_id,j.url) in active_jobs]
+    for job in already_queued:
+        decisions[(job.target_id, job.url)] = 'already_queued'
+        skipped[job.target_id] = None
+    due = [j for j in due if (j.target_id,j.url) not in active_jobs]
+    if cadence.daily_limit:
+        # Oldest/unobserved first; an alphabetic daily cap must not starve later IDs.
+        due.sort(key=lambda j: (due_dates.get((j.target_id,j.url), date.min),
+                               last.get((j.target_id,j.url), ''), j.target_id,j.url))
+        # Count today's attempts and still queued visits against the daily budget.
+        cutoff = datetime.combine(today, datetime.min.time(), zone).astimezone(UTC).isoformat()
+        attempted = store.conn.execute("SELECT COUNT(*) FROM scan WHERE started_at>=?", (cutoff,)).fetchone()[0]
+        queued = store.conn.execute("SELECT COUNT(*) FROM job WHERE state IN ('pending','claimed')").fetchone()[0]
+        available = max(0, cadence.daily_limit - attempted - queued)
+        for job in due[available:]:
+            decisions[(job.target_id, job.url)] = 'budget_deferred'
+            skipped[job.target_id] = None
+        due = due[:available]
+    for job in due:
+        decisions[(job.target_id, job.url)] = 'scheduled'
+    publish()
     return due, list(skipped)
 
 
@@ -143,8 +239,11 @@ async def run_batch(
     keep_evidence: bool = True,
     note: str | None = None,
     progress: ProgressFn | None = None,
+    plan_id: int | None = None,
+    external_worker: bool = False,
+    worker_timeout_seconds: float = 12 * 3600,
 ) -> BatchReport:
-    """Queue the work and drain it here.
+    """Queue and await work, inline by default or on the existing hosting worker.
 
     The command line and the dashboard's "scan now" put the same rows in the
     same queue; the only difference is where the worker happens to be
@@ -154,7 +253,11 @@ async def run_batch(
     say = progress or (lambda _msg: None)
     target_count = len({job.target_id for job in jobs})
 
-    run_id = store.queue_run(jobs, note=note)
+    if external_worker:
+        if worker_timeout_seconds <= 0:
+            raise ValueError('worker timeout must be positive')
+        require_live_worker(store)
+    run_id = store.queue_run(jobs, note=note, plan_id=plan_id)
     started_at = datetime.now(UTC).isoformat()
     say(f"run {run_id}: {target_count} targets, {len(jobs)} urls, "
         f"concurrency {concurrency}")
@@ -166,10 +269,20 @@ async def run_batch(
         done += 1
         say(f"  [{done}/{len(jobs)}]{line}")
 
-    await worker.drain_queue(
-        store, registry, scan_config=scan_config, run_id=run_id,
-        concurrency=concurrency, keep_evidence=keep_evidence, progress=relay)
-    worker.finish_runs(store, registry)
+    if external_worker:
+        say(f'run {run_id}: waiting for the existing collection worker')
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + worker_timeout_seconds
+        while not store.run_progress(run_id)['finished_at']:
+            require_live_worker(store)
+            if loop.time() >= deadline:
+                raise ExternalWorkerError(f'Run {run_id} exceeded the coordinator wait limit; queued work is preserved.')
+            await asyncio.sleep(2)
+    else:
+        await worker.drain_queue(
+            store, registry, scan_config=scan_config, run_id=run_id,
+            concurrency=concurrency, keep_evidence=keep_evidence, progress=relay)
+        worker.finish_runs(store, registry)
 
     if config.load().notify.webhook:
         from . import notify
@@ -259,16 +372,14 @@ def redetect(store: Store, registry: Registry, run_id: int | None = None,
         # as a real observation forever.
         # Privacy rules apply retroactively: evidence collected under a
         # looser rule is rewritten, not left as-is.
-        if _renormalise_storage(stored):
-            store.rewrite_evidence(scan_id, stored)
-            stats["scrubbed"] += 1
+        scrubbed = _renormalise_storage(stored)
 
         scan = stored.get("scan", {})
+        marker = None
         if scan.get("status") == ev.STATUS_OK and ev.is_browser_error_page(
                 scan.get("final_url"), scan.get("page_host")):
             scan["status"] = ev.STATUS_NAV_FAILED
-            store.restatus_scan(scan_id, ev.STATUS_NAV_FAILED, "browser_error_page", stored)
-            stats["restatused"] += 1
+            marker = "browser_error_page"
         if scan.get("status") == ev.STATUS_OK:
             # Block rules grow as new walls turn up; a challenge page stored
             # as OK before its marker existed must not stay a look.
@@ -276,17 +387,24 @@ def redetect(store: Store, registry: Registry, run_id: int | None = None,
                                      scan.get("page_host"))
             if marker:
                 scan["status"] = ev.STATUS_BLOCKED
-                store.restatus_scan(scan_id, ev.STATUS_BLOCKED, marker, stored)
-                stats["restatused"] += 1
         if scan.get("status") == ev.STATUS_OK:
             thin = ev.detect_thin(stored.get("counts") or {}, scan.get("title", ""))
             if thin:
                 scan["status"] = ev.STATUS_THIN
-                store.restatus_scan(scan_id, ev.STATUS_THIN, f"thin:{thin}", stored)
-                stats["restatused"] += 1
+                marker = f"thin:{thin}"
 
         report = det.detect(stored, registry)
-        stats["detections"] += store.record_detections(scan_id, report)
+        # One observation is one unit of work: privacy cleanup, status and
+        # detections either all publish or all roll back. Compress at most once.
+        with store.transaction():
+            if marker:
+                store.restatus_scan(scan_id, scan['status'], marker, stored)
+            elif scrubbed:
+                store.rewrite_evidence(scan_id, stored)
+            count = store.record_detections(scan_id, report)
+        stats['scrubbed'] += int(scrubbed)
+        stats['restatused'] += int(bool(marker))
+        stats["detections"] += count
         stats["rewritten"] += 1
 
     after = _detected_pairs(store, scan_ids)

@@ -94,7 +94,7 @@ def test_company_rows_reads_no_history_when_summaries_are_fresh(big_store):
 
 
 def test_company_rows_never_reads_detections_per_scan(big_store):
-    hits = count_queries(big_store, "FROM detection WHERE scan_id = ?")
+    hits = count_queries(big_store, "FROM detection WHERE scan_id = ")
     data.company_rows(big_store, {"fashion": "패션"})
     big_store.conn.set_trace_callback(None)
     assert hits[0] == 0  # batched IN (...) read only
@@ -157,3 +157,65 @@ def test_config_load_is_cached_until_the_file_changes(tmp_path):
     import os
     os.utime(path, ns=(os.stat(path).st_mtime_ns + 2_000_000_000,) * 2)
     assert cfg.load(path) is not first      # touched -> re-read
+
+
+def test_sales_board_uses_persistent_summaries_without_history(big_store, monkeypatch):
+    """A new request/Store must not rely on the previous request's RAM cache."""
+    from radar import signals as sig
+    from web import sales
+    expected = sales.board(big_store, {"fashion": "패션"}, status="all")
+    def unexpected_history(*args, **kwargs):
+        pytest.fail("fresh homepage must not reconstruct timelines")
+    monkeypatch.setattr(sig, "timelines", unexpected_history)
+    with Store(big_store.path) as fresh:
+        hits = count_history_reads(fresh)
+        assert sales.board(fresh, {"fashion": "패션"}, status="all") == expected
+        assert hits[0] == 0
+
+
+def test_sales_board_refreshes_only_changed_company(big_store, monkeypatch):
+    from radar import signals as sig
+    from web import sales
+    sig.summaries(big_store)
+    original = sig.timelines
+    calls = []
+    def tracked(store, target_ids=None):
+        calls.append(target_ids)
+        return original(store, target_ids=target_ids)
+    monkeypatch.setattr(sig, "timelines", tracked)
+    run = big_store.start_run(1)
+    payload = result("https://co0.example/")
+    payload['scan']['started_at'] = "2026-08-28T00:00:00+00:00"
+    sid = big_store.record_scan(run, "co0", payload, False)
+    big_store.record_detections(sid, {"detections": [detection("ga4", "analytics")]})
+    board = sales.board(big_store, {"fashion": "패션"}, status="watch")
+    assert calls == [["co0"]]
+    card = board['cards'][0]
+    assert card['id'] == 'co0' and card['good_count'] == 3
+    event = card['events'][0]
+    assert event['id'] == 'braze'
+    assert event['detected_count'] == 2 and event['missing_count'] == 1
+    assert event['pattern']['key'] == 'missing'
+    assert event['latest'] == '2026.08.28'
+    calls.clear()
+    assert sales.board(big_store, {"fashion": "패션"}, status="watch") == board
+    assert calls == []
+
+
+def test_legacy_summary_writer_invalidates_extension_without_losing_evidence(big_store):
+    """v12 writers can run during rollout; a v6 summary forces a full rebuild."""
+    from web import sales
+    expected = sales.board(big_store, {"fashion": "패션"}, status="all")
+    scans = big_store.conn.execute('SELECT COUNT(*) FROM scan').fetchone()[0]
+    # The old writer deletes/reinserts parent rows without the new payload.
+    big_store.conn.execute('DELETE FROM company_summary WHERE target_id=?', ('co0',))
+    assert big_store.conn.execute(
+        'SELECT COUNT(*) FROM company_observation_summary WHERE target_id=?', ('co0',)
+    ).fetchone()[0] == 0
+    big_store.conn.execute("UPDATE meta SET value=? WHERE key='summary_state'",
+                          (f'{big_store.data_state()}|s6',))
+    big_store.conn.commit()
+    with Store(big_store.path) as fresh:
+        assert fresh.get_meta('schema_version') == '12'
+        assert sales.board(fresh, {"fashion": "패션"}, status="all") == expected
+        assert fresh.conn.execute('SELECT COUNT(*) FROM scan').fetchone()[0] == scans

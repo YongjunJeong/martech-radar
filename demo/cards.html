@@ -1,0 +1,43 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+ *{box-sizing:border-box} html,body{margin:0;height:100%;background:#0d1117}
+ body{display:flex;align-items:center;justify-content:center;
+      font-family:-apple-system,Pretendard,"Noto Sans KR",sans-serif;color:#e6edf3}
+ .card{width:900px;text-align:center;display:none}
+ .card.on{display:block}
+ h1{font-size:44px;margin:0 0 14px;letter-spacing:-1px}
+ h1 b{color:#58a6ff}
+ .sub{font-size:19px;color:#8b949e;margin:0 0 34px;line-height:1.6}
+ .row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+ .pill{border:1px solid #30363d;border-radius:999px;padding:8px 16px;font-size:14px;color:#c9d1d9}
+ .pill b{color:#7ee787}
+ ul{list-style:none;padding:0;font-size:18px;line-height:2.1;color:#c9d1d9;text-align:left;
+    display:inline-block}
+ ul b{color:#e6edf3}
+ .k{color:#58a6ff}
+</style></head><body>
+<div class="card on" id="title">
+  <h1>MarTech <b>Deal Radar</b></h1>
+  <p class="sub">잠재고객이 <b>실제로 돌리고 있는</b> MarTech를 매주 실제 브라우저로 관측하고,<br>
+     무엇이 바뀌었는지를 영업 신호로 바꾼다</p>
+  <div class="row">
+    <span class="pill"><b>75</b> 벤더 지문</span>
+    <span class="pill">워치리스트는 <b>당신이</b> 정한다</span>
+    <span class="pill"><b>9</b> 증거 층</span>
+    <span class="pill"><b>191</b> 테스트</span>
+    <span class="pill">벤더 중립 · LLM <b>없음</b></span>
+  </div>
+</div>
+<div class="card" id="outro">
+  <h1>"이번 주 어떤 계정이 <b>더 흥미로워졌나</b>"</h1>
+  <p class="sub">"이 사이트가 무엇을 쓰는가"가 아니라<br><b>지난주와 무엇이 달라졌는가, 그 차이를 믿어도 되는가</b></p>
+  <ul>
+    <li><span class="k">·</span> 신규 도입 · 이탈 · <b>교체</b> · greenfield — 다섯 가지 신호</li>
+    <li><span class="k">·</span> 9개 증거 층 — 런타임 전역·CSP·번들 소스·IndexedDB까지</li>
+    <li><span class="k">·</span> 봇 차단 · 점검 페이지는 <b>이탈로 오해되지 않는다</b></li>
+    <li><span class="k">·</span> 증거를 보관 — 지문을 고치면 <b>과거 전부 재판정</b>, 폴더 복사가 곧 이전</li>
+  </ul>
+</div>
+<script>
+ const which = new URLSearchParams(location.search).get('c') || 'title';
+ document.querySelectorAll('.card').forEach(c => c.classList.toggle('on', c.id === which));
+</script></body></html>

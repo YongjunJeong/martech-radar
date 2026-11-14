@@ -1,0 +1,14 @@
+{$RADAR_PUBLIC_HOST} {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+        X-Frame-Options DENY
+        -Server
+    }
+    request_body {
+        max_size 8MB
+    }
+    reverse_proxy web:8848
+}

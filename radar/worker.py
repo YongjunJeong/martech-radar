@@ -78,7 +78,9 @@ async def drain_queue(
                 async with write_lock:
                     job = store.claim_job(f"{name}#{slot}", run_id)
                 if job is None:
-                    if idle_exit:
+                    # The always-on worker may own the last job of this
+                    # batch. Do not publish a digest before it finishes.
+                    if idle_exit and not store.has_unfinished_jobs(run_id):
                         return
                     await asyncio.sleep(2)
                     continue
@@ -87,16 +89,17 @@ async def drain_queue(
                 try:
                     # A company may be marked as an exception, with a reason
                     # recorded next to it. That decision travels with the job.
-                    collector.config.respect_robots = (
-                        base.respect_robots and job["robots_policy"] != "override")
-                    result = await collector.scan(job["url"])
+                    result = await collector.scan(
+                        job["url"], respect_robots=(
+                            base.respect_robots and job["robots_policy"] != "override"))
                     report_ = det.detect(result, registry)
                     async with write_lock:
-                        scan_id = store.record_scan(
-                            job["run_id"], job["target_id"], result, keep_evidence)
-                        store.record_detections(scan_id, report_)
-                        partial = store.flag_partial_scan(scan_id)
-                        store.finish_job(job["id"], scan_id)
+                        with store.transaction():
+                            scan_id = store.record_scan(
+                                job["run_id"], job["target_id"], result, keep_evidence)
+                            store.record_detections(scan_id, report_)
+                            partial = store.flag_partial_scan(scan_id)
+                            store.finish_job(job["id"], scan_id)
                     if partial:
                         say(f"  {job['target_id']:20} {'PARTIAL':18} {partial}")
                     report.done += 1
@@ -125,7 +128,7 @@ async def drain_queue(
                     async with write_lock:
                         store.set_meta("worker_seen", json.dumps(
                             {"name": name, "at": datetime.now(UTC).isoformat()}))
-                        closed = finish_runs(store, registry)
+                        closed = await asyncio.to_thread(finish_runs_at, store.path, registry)
                     if closed:
                         say(f"  closed run(s) {closed}")
                     await asyncio.sleep(2)
@@ -141,6 +144,11 @@ async def drain_queue(
         await asyncio.gather(*(consume(i) for i in range(max(1, concurrency))), chores())
 
     return report
+
+
+def finish_runs_at(path, registry=None):
+    with Store(path) as store:
+        return finish_runs(store, registry)
 
 
 def finish_runs(store: Store, registry: Registry | None = None) -> list[int]:

@@ -1,4 +1,4 @@
-"""Change detection and the sales signals built on it.
+"""Evidence-based change detection across all MarTech categories.
 
 Two rules decide almost everything here.
 
@@ -7,8 +7,10 @@ counted as absence. A bot wall is not a churn event, and the whole value of
 this system evaporates the first time a rep is sent to a "they dropped
 their platform" meeting because the site returned 403 that week.
 
-Only direct evidence counts. Indirect references can vary with the script-body
-budget, so they cannot establish a vendor change.
+Only direct evidence counts. Two live runs fifteen minutes apart agreed on
+all 329 DETECTED rows and disagreed on five `indirect_only` rows, because
+the script-body budget decides which third-party bundle gets read. Building
+signals on that would manufacture a weekly stream of ghosts.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cached_property
 from typing import Any
 from collections.abc import Iterable
 
@@ -58,31 +61,29 @@ STATE_REAPPEARED = "REAPPEARED"
 STATE_REMOVAL_CANDIDATE = "REMOVAL_CANDIDATE"
 STATE_REMOVED = "REMOVED"
 
-KIND_HOME_MIGRATION = "HOME_MIGRATION"          # we were replaced, and by whom
-KIND_HOME_REMOVAL = "HOME_REMOVAL"              # we are gone, replacement unknown
-KIND_COMPETITOR_MIGRATION = "COMPETITOR_MIGRATION"
-KIND_COMPETITOR_REMOVAL = "COMPETITOR_REMOVAL"
-KIND_GREENFIELD = "GREENFIELD"
-KIND_COMPETITOR_NEW = "COMPETITOR_NEW"
-KIND_HOME_NEW = "HOME_NEW"
-KIND_HOST_CHANGED = "HOST_CHANGED"                # we looked at a different site, not a changed stack
+KIND_MIGRATION = "STACK_CHANGE"
+KIND_REMOVAL = "NOT_SEEN"
+KIND_NEW = "NEW_DETECTION"
+KIND_HOST_CHANGED = "HOST_CHANGED"
 
-# Lower number sorts first, and the order is the order a rep should read
-# them in. Losing an account outranks everything, and losing it to a named
-# replacement outranks losing it to nothing — you know who to talk about.
-PRIORITY = {
-    KIND_HOME_MIGRATION: 1,
-    KIND_HOME_REMOVAL: 2,
-    KIND_COMPETITOR_MIGRATION: 3,
-    KIND_COMPETITOR_REMOVAL: 4,
-    KIND_GREENFIELD: 5,
-    KIND_COMPETITOR_NEW: 6,
-    KIND_HOME_NEW: 7,
-    KIND_HOST_CHANGED: 8,
+# Technical aliases for existing Python callers. All vendors now share kinds.
+KIND_HOME_MIGRATION = KIND_COMPETITOR_MIGRATION = KIND_MIGRATION
+KIND_HOME_REMOVAL = KIND_COMPETITOR_REMOVAL = KIND_REMOVAL
+KIND_HOME_NEW = KIND_COMPETITOR_NEW = KIND_NEW
+KIND_GREENFIELD = "GREENFIELD"  # retired: never emitted
+HOME_KINDS = frozenset()
+PRIORITY = {KIND_HOST_CHANGED: 1, KIND_MIGRATION: 2, KIND_REMOVAL: 3, KIND_NEW: 4}
+
+LEGACY_KINDS = {
+    "HOME_MIGRATION": KIND_MIGRATION, "COMPETITOR_MIGRATION": KIND_MIGRATION,
+    "HOME_REMOVAL": KIND_REMOVAL, "COMPETITOR_REMOVAL": KIND_REMOVAL,
+    "HOME_NEW": KIND_NEW, "COMPETITOR_NEW": KIND_NEW,
 }
 
-#: The `HOME_*` kinds only ever fire when `[vendor] home` is set.
-HOME_KINDS = frozenset({KIND_HOME_MIGRATION, KIND_HOME_REMOVAL, KIND_HOME_NEW})
+
+def normalize_key(key: str) -> str:
+    kind, sep, rest = key.partition(":")
+    return LEGACY_KINDS.get(kind, kind) + sep + rest
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,7 @@ def lands_off_domain(target_urls: list[str], site: SiteInfo | None) -> bool:
 
     A site that has landed on some other domain from the very first run is
     taken at its word — the company's official site simply lives there
-    (old.example → new.example). Only a *change* of landing is evidence that we
+    (nhqv.com → nhsec.com). Only a *change* of landing is evidence that we
     may be looking at someone else.
     """
     return bool(site and site.shift) and hst.off_domain(target_urls, site.hosts)
@@ -198,13 +199,7 @@ def change_from_dict(payload: dict[str, Any]) -> Change:
 
 @dataclass(frozen=True)
 class Maturity:
-    """How much MarTech an account already runs.
-
-    A greenfield lead is only interesting if the company is actually doing
-    digital marketing. Fifteen vendors and seven retargeting pixels with no
-    engagement platform is a company buying the same user repeatedly; two
-    vendors is a brochure site.
-    """
+    """Observed tool counts; not a judgement of marketing maturity."""
     total: int
     analytics: int
     advertising: int
@@ -213,8 +208,7 @@ class Maturity:
 
     @property
     def score(self) -> int:
-        return (self.analytics + self.advertising
-                + 2 * self.attribution + 2 * self.experimentation)
+        return self.total
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -273,12 +267,13 @@ def timeline(store: Store, target_id: str) -> tuple[list[RunObservation], dict[s
     the target was never scanned do not appear at all, which is what makes a
     filtered batch (`--only one_company`) harmless to everyone else's history.
     """
+    cutoff = cfg.load().analysis.cutoff
     rows = store.conn.execute(
         "SELECT s.run_id, s.id AS scan_id, s.status, s.started_at, s.page_host, "
         "       d.fingerprint_id, d.name, d.category, d.verdict, d.indirect_only "
         "FROM scan s LEFT JOIN detection d ON d.scan_id = s.id "
-        "WHERE s.target_id = ? ORDER BY s.run_id, s.id",
-        (target_id,),
+        "WHERE s.target_id = ? AND (? = '' OR julianday(s.started_at) >= julianday(?)) "
+        "ORDER BY julianday(s.started_at), s.id", (target_id, cutoff, cutoff),
     )
 
     per_run: dict[int, dict[str, Any]] = {}
@@ -326,7 +321,7 @@ def _observations(per_run: dict[int, dict[str, Any]]) -> list[RunObservation]:
     ]
 
 
-def timelines(store: Store) -> dict[str, tuple[list[RunObservation], dict[str, tuple[str, str]]]]:
+def timelines(store: Store, target_ids=None) -> dict[str, tuple[list[RunObservation], dict[str, tuple[str, str]]]]:
     """`timeline()` for every target in one pass over the history.
 
     The sweep endpoints (signals page, digest, company list) ask the same
@@ -334,11 +329,20 @@ def timelines(store: Store) -> dict[str, tuple[list[RunObservation], dict[str, t
     +detection read per company per sweep, twice when a page runs two
     sweeps. Grouping one joined read costs what a single company costs.
     """
+    ids = list(target_ids) if target_ids is not None else None
+    if ids == []:
+        return {}
+    where = ["s.target_id IN (" + ",".join("?" for _ in ids) + ")"] if ids else []
+    params = list(ids or ())
+    if cutoff := cfg.load().analysis.cutoff:
+        where.append("julianday(s.started_at) >= julianday(?)")
+        params.append(cutoff)
+    clause = "WHERE " + " AND ".join(where) + " " if where else ""
     rows = store.conn.execute(
         "SELECT s.target_id, s.run_id, s.id AS scan_id, s.status, s.started_at, s.page_host, "
         "       d.fingerprint_id, d.name, d.category, d.verdict, d.indirect_only "
         "FROM scan s LEFT JOIN detection d ON d.scan_id = s.id "
-        "ORDER BY s.target_id, s.run_id, s.id",
+        f"{clause}ORDER BY s.target_id, julianday(s.started_at), s.id", params,
     )
     grouped: dict[str, dict[int, dict[str, Any]]] = {}
     labels_by_target: dict[str, dict[str, tuple[str, str]]] = {}
@@ -424,7 +428,7 @@ def has_judged_run(store: Store, target_id: str) -> bool:
 
     Not the same as "we found something". A site scanned successfully with
     zero vendors detected has an empty change list, and gating on that list
-    is how a real greenfield account falls out of every view at once.
+    would incorrectly hide a successfully observed site.
     """
     return any(o.judged for o in timeline(store, target_id)[0])
 
@@ -470,28 +474,77 @@ class CompanySummary:
     changes: list[Change]
     maturity: Maturity
     site: SiteInfo | None = None
+    observations_json: str = field(default="{}", repr=False)
+
+    @cached_property
+    def observations(self) -> dict[str, Any]:
+        # Detail/legacy pages need at most one company's facts. Avoid decoding
+        # every company's extra payload just to open one company.
+        return json.loads(self.observations_json)
 
 
 #: Bumped when the *derivation* changes (states, windows, serialisation) —
 #: the data digest alone cannot see a code change.
-SUMMARY_VERSION = 3
+SUMMARY_VERSION = 8
+
+
+def observation_summary(observations: list[RunObservation], changes: list[Change],
+                        site: SiteInfo | None) -> dict[str, Any]:
+    """Bounded facts for sales views, derived with the same cutoff/site scope.
+
+    Keep counts and the eight most recent judged observations, not a second
+    copy of the complete history. Evidence itself stays in scan/detection.
+    """
+    good = [o for o in observations if o.judged
+            and (not site or not site.shift or o.run_id >= site.shift.run_id)]
+    vendors = {}
+    for change in changes:
+        present = [o for o in good if change.fingerprint_id in o.vendors]
+        facts = dict(detected_count=len(present),
+                     last_seen_at=present[-1].scanned_at if present else None,
+                     evidence_run=present[-1].run_id if present else None)
+        if change.state not in (STATE_BASELINE, STATE_STABLE):
+            previous = good[-change.run_streak - 1]
+            facts.update(previous_at=previous.scanned_at,
+                         previous_detected=change.fingerprint_id in previous.vendors)
+        vendors[change.fingerprint_id] = facts
+    return dict(observed_runs=len(observations), good_runs=len(good),
+                first_at=good[0].scanned_at if good else None,
+                last_at=good[-1].scanned_at if good else None,
+                recent=[dict(scanned_at=o.scanned_at, vendors=sorted(o.vendors))
+                        for o in good[-8:]], vendors=vendors)
 
 
 def _summary_state(store: Store) -> str:
-    return f"{store.data_state()}|s{SUMMARY_VERSION}"
+    cutoff = cfg.load().analysis.cutoff
+    return f"{store.data_state()}|s{SUMMARY_VERSION}" + (f"|since:{cutoff}" if cutoff else "")
 
 
 def refresh_summaries(store: Store) -> int:
-    """Recompute every company's Gold row from the current Silver layer.
+    """Coalesce writers using SQLite's reservation, then refresh dirty targets.
 
-    Called when a batch drains and after a redetect; `summaries()` also
-    calls it whenever the stored key no longer matches the data, so a
-    reader can trust what it gets without trusting when it was written.
+    A waiter rechecks the revision after acquiring the reservation. Readers
+    keep their WAL snapshots; writers cannot publish half a refresh.
     """
+    try:
+        store.conn.execute("BEGIN IMMEDIATE")
+        result = _refresh_locked(store)
+        store.conn.commit()
+        return result
+    except BaseException:
+        store.conn.rollback()
+        raise
+
+
+def _refresh_locked(store: Store) -> int:
     state = _summary_state(store)
-    coverage = store.coverage()
-    stacks = store.stacks_of()
-    lines = timelines(store)
+    if store.summary_state() == state:
+        return 0
+    full = (store.summary_state() or "").partition("|")[2] != state.partition("|")[2]
+    dirty = None if full else [r[0] for r in store.conn.execute("SELECT target_id FROM summary_dirty")]
+    coverage = store.coverage(target_ids=dirty)
+    stacks = store.stacks_of(target_ids=dirty)
+    lines = timelines(store, target_ids=dirty)
     rows: list[dict[str, Any]] = []
     for target_id, cover in coverage.items():
         stack = stacks.get(target_id, [])
@@ -499,6 +552,14 @@ def refresh_summaries(store: Store) -> int:
         changes = (changes_for(store, target_id, timeline_data)
                    if cover["judged"] else [])
         maturity = maturity_of(store, target_id, stack)
+        site = site_info(timeline_data[0])
+        observations = observation_summary(timeline_data[0], changes, site)
+        solution_facts = []
+        for change in changes:
+            present = [change.fingerprint_id in o['vendors'] for o in observations['recent']]
+            transitions = sum(a != b for a, b in zip(present, present[1:], strict=False))
+            solution_facts.append((change.fingerprint_id, change.category, change.state,
+                                   change.run_streak, int(transitions >= 3)))
         rows.append({
             "target_id": target_id,
             "judged": cover["judged"],
@@ -511,25 +572,33 @@ def refresh_summaries(store: Store) -> int:
             "changes_json": json.dumps([c.as_dict() for c in changes],
                                        ensure_ascii=False),
             "maturity_json": json.dumps(maturity.as_dict()),
-            "site_json": json.dumps(
-                site.as_dict() if (site := site_info(timeline_data[0])) else None),
+            "site_json": json.dumps(site.as_dict() if site else None),
+            "observations_json": json.dumps(observations),
+            "filter_facts": (observations['observed_runs'], observations['good_runs'],
+                             int(bool(site and site.shift))),
+            "solution_facts": solution_facts,
         })
-    store.replace_summaries(rows, state)
+    store.conn.execute("DELETE FROM summary_dirty")
+    store.replace_summaries(rows, state, target_ids=dirty)
     # This handle may have served the old rows already; forget them.
     store._summary_cache = None
     return len(rows)
 
 
-def summaries(store: Store) -> dict[str, CompanySummary]:
+def summaries(store: Store, target_ids=None) -> dict[str, CompanySummary]:
     """The stored summaries, rebuilt first if the data has moved on.
 
     Cached on the store handle: a web request opens one Store and renders
     several views from it, and they should share one table read.
     """
     state = _summary_state(store)
+    ids = None if target_ids is None else tuple(sorted(set(target_ids)))
     cached = getattr(store, "_summary_cache", None)
     if cached is not None and cached[0] == state:
-        return cached[1]
+        return cached[1] if ids is None else {k: cached[1][k] for k in ids if k in cached[1]}
+    scoped = getattr(store, '_scoped_summary_cache', None)
+    if ids is not None and scoped and scoped[:2] == (state, ids):
+        return scoped[2]
     if store.summary_state() != state:
         refresh_summaries(store)
     loaded = {
@@ -545,19 +614,18 @@ def summaries(store: Store) -> dict[str, CompanySummary]:
             changes=[change_from_dict(c) for c in json.loads(row["changes_json"])],
             maturity=Maturity.from_dict(json.loads(row["maturity_json"])),
             site=SiteInfo.from_dict(json.loads(row["site_json"] or "null")),
+            observations_json=row["observations_json"] or "{}",
         )
-        for row in store.summary_rows()
+        for row in store.summary_rows(target_ids=ids)
     }
-    store._summary_cache = (state, loaded)
+    if ids is None:
+        store._summary_cache = (state, loaded)
+    else:
+        store._scoped_summary_cache = (state, ids, loaded)
     return loaded
 
 
 # -- signals -----------------------------------------------------------------
-
-# Below this, an account is not doing enough digital marketing for "no
-# engagement platform" to mean anything worth a call.
-GREENFIELD_MIN_MATURITY = 6
-
 
 def _pair_migrations(going: list[Change], arriving: list[Change]
                      ) -> tuple[list[tuple[Change, Change]], set[Change]]:
@@ -570,7 +638,8 @@ def _pair_migrations(going: list[Change], arriving: list[Change]
     candidates = sorted(
         ((_days_between(g.since_at, a.since_at), g, a)
          for g in going for a in arriving
-         if _days_between(g.since_at, a.since_at) <= MIGRATION_WINDOW_DAYS),
+         if g.category == a.category
+         and _days_between(g.since_at, a.since_at) <= MIGRATION_WINDOW_DAYS),
         key=lambda triple: (triple[0], triple[1].name, triple[2].name),
     )
     pairs: list[tuple[Change, Change]] = []
@@ -590,6 +659,8 @@ def signals_for(store: Store, target_row: Any,
                 timeline_data: tuple[list[RunObservation], dict[str, tuple[str, str]]] | None = None,
                 summary: CompanySummary | None = None,
                 ) -> list[Signal]:
+    if not target_row["enabled"]:
+        return []
     settings = cfg.load()
     language = language or settings.ui.language
     t = translator(language)
@@ -621,28 +692,18 @@ def signals_for(store: Store, target_row: Any,
             detail=t("signal.host_changed.detail", run=site.shift.run_id)
                    + (t("signal.host_changed.off_domain") if off else ""),
         ))
-    engagement_now = [
-        c for c in changes
-        if c.category == ENGAGEMENT
-        and c.state in (STATE_STABLE, STATE_NEW, STATE_REAPPEARED, STATE_BASELINE)
-    ]
-
-    home = (settings.vendor.home or "").strip()
     going = [c for c in changes
-             if c.state in (STATE_REMOVAL_CANDIDATE, STATE_REMOVED)
-             and c.category == ENGAGEMENT]
-    arriving = [c for c in changes
-                if c.state in (STATE_NEW, STATE_REAPPEARED) and c.category == ENGAGEMENT]
+             if c.state in (STATE_REMOVAL_CANDIDATE, STATE_REMOVED)]
+    arriving = [c for c in changes if c.state in (STATE_NEW, STATE_REAPPEARED)]
 
     # A departure and an arrival close together in the same category is one
     # event, not two. Reporting both halves separately buries the fact that
     # matters — that the account swapped, and to what.
     pairs, paired = _pair_migrations(going, arriving)
     for left, joined in pairs:
-        is_home = bool(home) and left.fingerprint_id == home
         confirmed = left.state == STATE_REMOVED
         found.append(Signal(
-            kind=KIND_HOME_MIGRATION if is_home else KIND_COMPETITOR_MIGRATION,
+            kind=KIND_MIGRATION,
             target_id=target_id, company=company, industry=industry,
             headline=t("signal.migration.headline", gone=left.name, arrived=joined.name)
                      + ("" if confirmed else t("signal.migration.unconfirmed")),
@@ -655,35 +716,21 @@ def signals_for(store: Store, target_row: Any,
         if change in paired:
             continue
         confirmed = change.state == STATE_REMOVED
-        if home and change.fingerprint_id == home:
-            found.append(Signal(
-                kind=KIND_HOME_REMOVAL,
-                target_id=target_id, company=company, industry=industry,
-                headline=t("signal.home_removal.headline",
-                           vendor=change.name, streak=change.run_streak)
-                         + ("" if confirmed else t("signal.home_removal.unconfirmed")),
-                detail=t("signal.home_removal.detail", since=change.since_run)
-                       + t("signal.home_removal.confirmed_note" if confirmed
-                           else "signal.home_removal.candidate_note"),
-                vendors=(change.name,), changes=(change,),
-            ))
-        else:
-            found.append(Signal(
-                kind=KIND_COMPETITOR_REMOVAL,
-                target_id=target_id, company=company, industry=industry,
-                headline=t("signal.competitor_removal.headline",
-                           name=change.name, streak=change.run_streak)
-                         + ("" if confirmed else t("signal.competitor_removal.unconfirmed")),
-                detail=t("signal.competitor_removal.detail", since=change.since_run),
-                vendors=(change.name,), changes=(change,),
-            ))
+        found.append(Signal(
+            kind=KIND_REMOVAL,
+            target_id=target_id, company=company, industry=industry,
+            headline=t("signal.removal.headline", name=change.name,
+                       streak=change.run_streak)
+                     + ("" if confirmed else t("signal.removal.unconfirmed")),
+            detail=t("signal.removal.detail", since=change.since_run),
+            vendors=(change.name,), changes=(change,),
+        ))
 
     for change in arriving:
         if change in paired:
             continue
-        is_home = bool(home) and change.fingerprint_id == home
         found.append(Signal(
-            kind=KIND_HOME_NEW if is_home else KIND_COMPETITOR_NEW,
+            kind=KIND_NEW,
             target_id=target_id, company=company, industry=industry,
             headline=t("signal.arrival.headline", name=change.name)
                      + (t("signal.arrival.reappeared")
@@ -692,90 +739,31 @@ def signals_for(store: Store, target_row: Any,
             vendors=(change.name,), changes=(change,),
         ))
 
-    if not engagement_now and not pending_removal(changes) and not off:
-        maturity = maturity_of(store, target_id, stack)
-        if maturity.score >= GREENFIELD_MIN_MATURITY:
-            found.append(Signal(
-                kind=KIND_GREENFIELD,
-                target_id=target_id, company=company, industry=industry,
-                headline=t("signal.greenfield.headline", total=maturity.total),
-                detail=(t("signal.greenfield.detail",
-                          advertising=maturity.advertising, analytics=maturity.analytics)
-                        + (t("signal.greenfield.attribution", n=maturity.attribution)
-                           if maturity.attribution else "")
-                        + (t("signal.greenfield.experimentation", n=maturity.experimentation)
-                           if maturity.experimentation else "")
-                        + "."),
-                maturity=maturity,
-            ))
-
     return found
 
 
 def pending_removal(changes: Iterable[Change]) -> list[Change]:
-    """Engagement platforms seen until recently and absent once.
-
-    Not gone yet, not present either. Calling such an account greenfield
-    would turn one missed tag load into a "no platform" pitch to a company
-    that ran Braze last week; it stays out of both greenfield buckets until
-    the removal is confirmed or the platform reappears.
-    """
-    return [c for c in changes
-            if c.category == ENGAGEMENT and c.state == STATE_REMOVAL_CANDIDATE]
+    """Tools absent in recent observations, pending confirmation."""
+    return [c for c in changes if c.state == STATE_REMOVAL_CANDIDATE]
 
 
-def quiet_greenfield(store: Store, language: str | None = None
-                     ) -> list[dict[str, Any]]:
-    """Companies with no engagement platform that fell below the maturity bar.
-
-    Reported rather than dropped: a threshold that hides accounts silently
-    reads as "we checked and there was nothing", which is how a watchlist
-    quietly stops covering half of itself.
-    """
-    language = language or cfg.load().ui.language
-    quiet: list[dict[str, Any]] = []
-    summary_map = summaries(store)
-    for target_row in store.targets():
-        target_id = target_row["id"]
-        summary = summary_map.get(target_id)
-        if summary is None or not summary.judged:
-            continue
-        if any(c.category == ENGAGEMENT
-               and c.state in (STATE_STABLE, STATE_NEW, STATE_REAPPEARED, STATE_BASELINE)
-               for c in summary.changes):
-            continue
-        if pending_removal(summary.changes):
-            continue
-        if lands_off_domain(json.loads(target_row["urls_json"]), summary.site):
-            continue
-        maturity = summary.maturity
-        if maturity.score < GREENFIELD_MIN_MATURITY:
-            quiet.append({
-                "target_id": target_id,
-                "company": company_name(target_row, language),
-                "industry": target_row["industry"],
-                "maturity": maturity.as_dict(),
-            })
-    # Highest score first: ad-tech cookie-sync endpoints fire conditionally,
-    # so an account sitting on the threshold can drop a point one week and
-    # regain it the next. Near-misses belong at the top of the list, not
-    # buried in id order.
-    quiet.sort(key=lambda q: -q["maturity"]["score"])
-    return quiet
+def quiet_greenfield(store: Store, language: str | None = None) -> list[dict[str, Any]]:
+    """Compatibility shim: absence of a category is no longer a sales signal."""
+    return []
 
 
 def all_signals(store: Store, kinds: Iterable[str] | None = None,
                 language: str | None = None) -> list[Signal]:
-    wanted = set(kinds) if kinds else None
+    wanted = {LEGACY_KINDS.get(k, k) for k in kinds} if kinds else None
     language = language or cfg.load().ui.language
     found: list[Signal] = []
     summary_map = summaries(store)
-    for target_row in store.targets():
+    for target_row in store.targets(enabled_only=True):
         summary = summary_map.get(target_row["id"])
         if summary is None:
             continue
         for signal in signals_for(store, target_row, language, summary=summary):
             if wanted is None or signal.kind in wanted:
                 found.append(signal)
-    found.sort(key=lambda s: (s.priority, s.industry, s.company))
+    found.sort(key=lambda s: (s.priority, s.industry, s.company, s.vendors))
     return found

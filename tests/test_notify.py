@@ -50,7 +50,7 @@ def test_each_signal_is_sent_exactly_once(store_with_new_vendor):
     first = notify.notify_new_signals(s, webhook="https://hook.example/x",
                                       transport=lambda url, p: sent.append(p))
     assert first["sent"] == first["pending"] == 1
-    assert "가나다몰" in sent[0]["text"] and "COMPETITOR_NEW" in sent[0]["text"]
+    assert "가나다몰" in sent[0]["text"] and "NEW_DETECTION" in sent[0]["text"]
     again = notify.notify_new_signals(s, webhook="https://hook.example/x",
                                       transport=lambda url, p: sent.append(p))
     assert again == {"pending": 0, "sent": 0} and len(sent) == 1
@@ -92,3 +92,15 @@ def test_notify_config_rejects_a_bad_format(tmp_path):
     path.write_text('[notify]\nformat = "carrier-pigeon"\n')
     with pytest.raises(cfg.ConfigError):
         cfg.load(path)
+
+
+def test_paused_target_keeps_history_but_never_notifies(store_with_new_vendor):
+    from radar import signals
+    s = store_with_new_vendor
+    assert signals.all_signals(s)  # warm summaries before pausing
+    s.set_target_enabled('shop', False)
+    assert signals.all_signals(s) == []
+    assert signals.signals_for(s, s.target('shop')) == []
+    assert signals.changes_for(s, 'shop')  # history is still queryable
+    assert notify.notify_new_signals(s, webhook='https://hook.example/x',
+                                    transport=lambda *a: pytest.fail('sent')) == {'pending': 0, 'sent': 0}

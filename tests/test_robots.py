@@ -8,6 +8,7 @@ just as importantly — that the skip can never be mistaken for a finding.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 
 
@@ -187,3 +188,85 @@ def test_a_successful_fetch_replaces_what_we_remembered(tmp_path):
     assert asyncio.run(RobotsCache(memory=store).check("https://z.test/x", strict)).allowed is False
     assert asyncio.run(RobotsCache(memory=store).check("https://z.test/x", relaxed)).allowed is True
     store.close()
+
+
+def test_per_job_override_does_not_leak_sequentially_or_concurrently(site, tmp_path):
+    from radar.batch import Job
+    from radar.worker import drain_queue
+    from radar.targets import Target, TargetSet
+
+    async def run(concurrency):
+        with Store(tmp_path / f'{concurrency}.db') as store:
+            store.import_watchlist(TargetSet(tuple(
+                Target(id=tid, company=tid, industry='test',
+                       urls=(f'{site}/forbidden.html',), robots_policy=policy,
+                       robots_note='test exception' if policy == 'override' else None)
+                for tid, policy in [('exception', 'override'), ('normal', 'respect')]
+            ), {'test': 'test'}, 'test'))
+            run_id = store.queue_run([Job(tid, tid, f'{site}/forbidden.html')
+                                      for tid in ('exception', 'normal')])
+            config = ScanConfig(**FAST, respect_robots=True)
+            await drain_queue(store, reg.load(), config, run_id=run_id,
+                              concurrency=concurrency)
+            rows = store.conn.execute('SELECT id,target_id,status FROM scan').fetchall()
+            assert {r['target_id']: r['status'] for r in rows} == {
+                'exception': ev.STATUS_OK, 'normal': ev.STATUS_SKIPPED_BY_ROBOTS}
+            for row in rows:
+                evidence = store.load_evidence(row['id'])
+                assert evidence['scan']['config']['respect_robots'] == (row['target_id'] == 'normal')
+            assert config.respect_robots is True
+
+    asyncio.run(run(1))
+    asyncio.run(run(2))
+
+
+def test_concurrent_same_origin_shares_fetch_and_retains_path_rules():
+    async def run():
+        calls = []
+        async def fetch(url):
+            calls.append(url)
+            await asyncio.sleep(.05)
+            return 200, 'User-agent: *\nDisallow: /private\nCrawl-delay: 2\n'
+        cache = RobotsCache()
+        decisions = await asyncio.gather(*(cache.check('https://site.test/' + path, fetch)
+                                          for path in ('public', 'private', 'other')))
+        assert len(calls) == 1
+        assert [d.allowed for d in decisions] == [True, False, True]
+        assert all(d.crawl_delay == 2 for d in decisions)
+    asyncio.run(run())
+
+
+def test_robots_fetch_lock_does_not_serialize_different_origins():
+    async def run():
+        both_started = asyncio.Event()
+        calls = []
+        async def fetch(url):
+            calls.append(url)
+            if len(calls) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return 200, 'User-agent: *\nDisallow: /private\n'
+        cache = RobotsCache()
+        result = await asyncio.gather(*(cache.check(url, fetch) for url in
+                                      ('https://one.test/private', 'https://two.test/private')))
+        assert all(not d.allowed for d in result)
+    asyncio.run(run())
+
+
+def test_cancelled_robots_fetch_releases_same_origin_lock():
+    async def run():
+        started = asyncio.Event()
+        async def hanging(url):
+            started.set()
+            await asyncio.Event().wait()
+        async def available(url):
+            return 200, 'User-agent: *\nDisallow: /private\n'
+        cache = RobotsCache()
+        task = asyncio.create_task(cache.check('https://site.test/private', hanging))
+        await started.wait()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        decision = await asyncio.wait_for(cache.check('https://site.test/private', available), timeout=1)
+        assert not decision.allowed
+    asyncio.run(run())

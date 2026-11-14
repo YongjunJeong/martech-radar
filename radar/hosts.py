@@ -1,7 +1,7 @@
 """What counts as "the same site" when a landing host changes.
 
-A watched URL may redirect: travel.travel.example landed on
-nol.travel.example for months and then, one week, on nol.booking.example. The
+A watched URL may redirect: travel.interpark.com landed on
+nol.interpark.com for months and then, one week, on nol.yanolja.com. The
 first is the same company on another subdomain; the second is a different
 company's homepage. Vendor history across that second kind of change is
 not a change in what the company runs — it is a change in whose site we
@@ -27,7 +27,7 @@ def host_of(url_or_host: str) -> str:
 
 
 def registrable(url_or_host: str) -> str:
-    """`nol.travel.example` → `travel.example`; `shop.foo.co.kr` → `foo.co.kr`."""
+    """`nol.interpark.com` → `interpark.com`; `shop.foo.co.kr` → `foo.co.kr`."""
     host = host_of(url_or_host).strip(".")
     if host.startswith("www."):
         host = host[4:]
@@ -40,16 +40,16 @@ def sites(hosts: Iterable[str]) -> frozenset[str]:
 
 def brand(site: str) -> str:
     """The part of a registrable domain that names the company:
-    `sample-cola.com` → `samplecola`, `sample-cafe.co.kr` → `samplecafe`."""
+    `coca-cola.com` → `cocacola`, `caffe-pascucci.co.kr` → `caffepascucci`."""
     labels = registrable(site).split(".")
     return labels[0].replace("-", "").replace("_", "") if labels else ""
 
 
 def same_brand(a: str, b: str) -> bool:
-    """samplebrand.co.kr and samplebrand.com are one company that moved; so are
-    samplebrandusa.com and samplebrand.co.kr. One brand label containing the other
+    """coreana.co.kr and coreana.com are one company that moved; so are
+    inbodyusa.com and inbody.co.kr. One brand label containing the other
     (four letters or more) is the line — short enough to catch renames,
-    long enough that samplefresh and samplemarket stay different."""
+    long enough that lottefresh and lotteon stay different."""
     x, y = brand(a), brand(b)
     if not x or not y:
         return False

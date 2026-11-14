@@ -1,0 +1,40 @@
+{% if policy_reference is defined and policy_reference %}
+{% set p = policy_reference %}
+{% set ko = lang == 'ko' %}
+<section class="policy-reference" aria-labelledby="policy-reference-title">
+  <div class="policy-heading"><h2 id="policy-reference-title">{{ '약관 참고 근거' if ko else 'Policy references' }}</h2><span class="policy-label">{{ '문서 내 언급' if ko else 'Mentioned in documents' }}</span></div>
+  <p class="policy-explanation">{{ '개인정보 처리방침 등에 나온 업체명입니다. 웹사이트에서 실제 검출된 결과와 구분하며, 사용 여부·변화 신호·연락 우선순위에 반영하지 않습니다.' if ko else 'Names found in public policy documents. These references do not establish actual use and do not affect browser detections, change signals, or contact priority.' }}</p>
+  <p class="policy-headline">{{ p.headline if ko else p.headline_en }}</p>
+  {% if p.organizations %}<p class="policy-names">{{ p.organizations|join(' · ') }}</p>{% endif %}
+  <div class="policy-meta">
+    {% if p.checked_at %}<span>{{ ('이전 자료 확인' if p.previous else '자료 확인') if ko else ('Older reference checked' if p.previous else 'Reference checked') }} {{ p.checked_at }} KST</span>{% endif %}
+    {% if p.attempted_at and (p.previous or not p.documents) %}<span>{{ '최근 확인 시도' if ko else 'Last attempt' }} {{ p.attempted_at }} KST</span>{% endif %}
+    {% if not p.enabled %}<span>{{ '모니터링 중지 · 자동 수집 대상 제외' if ko else 'Monitoring paused · automatic refresh disabled' }}</span>
+    {% elif p.next_due %}<span>{{ ('주간 재확인 대기' if p.overdue else '다음 재확인 기준') if ko else ('Refresh due' if p.overdue else 'Next refresh eligibility') }} · {{ p.next_due }} KST {{ '이후 순차 처리' if ko else 'on or after this time, subject to capacity' }}</span>
+    {% else %}<span>{{ '주간 순회 수집에서 확인합니다.' if ko else 'Included in the weekly collection rotation.' }}</span>{% endif %}
+  </div>
+  {% if p.issues %}<p class="policy-issues">{{ p.issues|join(' ') if ko else 'Some documents could not be read. Existing references do not imply current use.' }}</p>{% endif %}
+  {% if p.documents %}
+  <details class="policy-documents">
+    <summary><span>{{ '문서' if ko else 'Documents' }} {{ p.documents|length }} · {{ '인용 문구와 원문 보기' if ko else 'View excerpts and sources' }}</span>{% include "_disclosure_chevron.html" %}</summary>
+    <div class="policy-body">
+    {% if p.previous %}<p class="policy-issues">{{ '이전 확인일의 자료입니다. 현재 문서에도 같은 내용이 있는지는 확인하지 못했습니다.' if ko else 'This is an older reference. Its presence in the current document has not been verified.' }}</p>{% endif %}
+    {% for document in p.documents %}
+      <article class="policy-document">
+        <div class="policy-document-heading"><strong>{{ '참고 문서' if ko else 'Source' }} {{ loop.index }} · {{ document.host }}</strong><a href="{{ document.url }}" target="_blank" rel="noopener noreferrer">{{ '원문 보기 ↗' if ko else 'Open source ↗' }}</a></div>
+        {% if document.document_date_labels %}<p class="policy-meta">{{ '문서 날짜 표기(과거 이력 포함):' if ko else 'Date labels (may include historical versions):' }} {{ document.document_date_labels|join(' · ') }} · {{ '도입일을 의미하지 않습니다.' if ko else 'These are not adoption dates.' }}</p>{% endif %}
+        {% if document.mentions %}
+        <table class="policy-evidence"><thead><tr><th scope="col">{{ '문서 속 업체명' if ko else 'Organization named' }}</th><th scope="col">{{ '문서 구간' if ko else 'Document section' }}</th><th scope="col">{{ '인용 문구' if ko else 'Excerpt' }}</th></tr></thead><tbody>
+        {% for mention in document.mentions %}
+        <tr><th scope="row">{{ mention.organization }}</th><td>{{ mention.category }}</td><td><blockquote>{{ mention.excerpt }}</blockquote></td></tr>
+        {% endfor %}
+        </tbody></table>
+        {% else %}<p class="policy-empty">{{ '이 문서에서 등록된 업체명은 추출되지 않았습니다. 솔루션 미사용을 뜻하지 않습니다.' if ko else 'No names from the reference dictionary were extracted. This does not establish non-use.' }}</p>{% endif %}
+      </article>
+    {% endfor %}
+    <p class="policy-footnote">{{ '업체명은 특정 제품이나 직접 계약을 뜻하지 않습니다. 협력사·재위탁·과거·예정에 관한 언급일 수 있으므로 원문 맥락을 함께 확인하세요.' if ko else 'A name does not establish a specific product or direct contract. Review the original context for subcontractors, past relationships, or planned work.' }}</p>
+    </div>
+  </details>
+  {% endif %}
+</section>
+{% endif %}

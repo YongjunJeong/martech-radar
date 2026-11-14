@@ -1,0 +1,28 @@
+# Example for the separately provisioned generation host. Do not install here.
+[Unit]
+Description=MarTech Radar private preparation gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=radar-generation
+Group=radar-generation
+WorkingDirectory=/srv/radar-generation/config
+Environment=RADAR_HOME=/srv/radar-generation/config
+Environment=HOME=/srv/radar-generation/home
+Environment=RADAR_GATEWAY_TOKEN_FILE=/srv/radar-generation/secrets/gateway-token
+Environment=RADAR_GATEWAY_LOCK_FILE=/run/radar-generation/gateway.lock
+RuntimeDirectory=radar-generation
+RuntimeDirectoryMode=0700
+ExecStart=/opt/radar-generation/bin/python -m web.preparation_gateway --host 127.0.0.1 --port 8612
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=270
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

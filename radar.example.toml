@@ -6,6 +6,9 @@
 locale = "en-US"
 timezone = "UTC"
 concurrency = 3
+# Enable only after verifying Chromium sandbox support on the deployment host.
+# The container staging profile requires true; startup failures do not fall back.
+chromium_sandbox = false
 
 # Read each site's robots.txt and skip what it disallows. Per-company
 # exceptions (with a recorded reason) are made on the Manage page.
@@ -13,11 +16,27 @@ respect_robots = true
 robots_user_agent = "*"
 # Minimum gap between two requests to the same site, on top of Crawl-delay.
 per_site_delay_ms = 1000
+# Optional: only confirmed slow sites get a longer observation floor, measured
+# from the latest document navigation. Exact host keys; 0..60000 milliseconds.
+# Scripts still loading get at most 10s extra; unstable visits become PARTIAL.
+# The absolute 90s visit timeout and concurrency limit remain in force.
+# [scan.minimum_observation_ms_by_host]
+# "www.example.com" = 35000
+# Prefer a verified site-owned common bootstrap checkpoint when available.
+# Finishes early once ready and quiet; missing after 35s becomes PARTIAL.
+# Never use a monitored vendor's own SDK global as the checkpoint.
+# [scan.readiness_window_key_by_host]
+# "www.example.com" = "storeBootstrapReady"
 
 [cadence]
+# Spread initial weekly visits over seven local dates, preserving overdue work.
+spread_weekly = false
+# 0 = unlimited; applies to scheduled batch --due, not manual batches.
+daily_limit = 0
 # How often each watchlist tier is due, read only by `radar batch --due`.
 # Keys are your tier labels; "default" covers untiered targets and any tier
-# not listed. Durations are "12h" / "7d" style.
+# not listed. Days ("1d", "7d") follow calendar dates in scan.timezone;
+# hours ("12h", "24h") use elapsed time. Failed attempts also count.
 default = "7d"
 # P1 = "1d"
 # P2 = "7d"
@@ -29,17 +48,14 @@ default = "7d"
 webhook = ""
 # "slack" posts {"text": ...} (Slack/most chat tools); "json" posts the raw list.
 format = "slack"
-# kinds = ["HOME_MIGRATION", "HOME_REMOVAL", "COMPETITOR_MIGRATION",
-#          "COMPETITOR_REMOVAL", "COMPETITOR_NEW", "HOME_NEW"]
+# kinds = ["HOST_CHANGED", "STACK_CHANGE", "NOT_SEEN", "NEW_DETECTION"]
 max_items = 20
 
-[vendor]
-# Fingerprint id of your own product, if you sell one — e.g. "braze".
-# Setting it splits "we lost this account" from "a competitor lost it".
-# Leave empty to treat every vendor alike.
-home = ""
+# Legacy [vendor] home is accepted for compatibility but has no effect.
 
 [server]
+# Hosting reverse proxy: canonical HTTPS origin, no path; empty for local use.
+# public_origin = "https://radar.example.com"
 # Required before the dashboard will bind to anything but 127.0.0.1.
 token = ""
 # Whether the scan box may point at private addresses. Off by default so a
@@ -49,3 +65,25 @@ allow_private_targets = false
 [ui]
 # "en" or "ko"
 language = "en"
+
+[analysis]
+# Inclusive local calendar date; empty keeps all history. Raw scans are retained.
+since = ""
+timezone = "Asia/Seoul"
+
+[preparation]
+# Optional: keep KB and the selected CLI on a private generation service.
+# gateway_url = "https://private-generation.example"
+# gateway_token_file = "/run/secrets/preparation_gateway_token"
+# Optional Korean sales workspace: use cases -> proposal -> email draft.
+# Requires a vendor-neutral marketing KB service and an authenticated CLI.
+# No email is sent. See docs/CODEX.md for ChatGPT login and usage limits.
+enabled = false
+mkb_url = "http://127.0.0.1:8611"
+# Existing installations default to "cli" (Claude). To use Codex:
+# backend = "codex"
+# codex_binary = "codex"
+# codex_model = ""  # Empty uses the CLI default; not the Claude model below.
+model = "sonnet"
+timeout_seconds = 240
+# claude_binary = "/home/your-user/.local/bin/claude"

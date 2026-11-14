@@ -9,7 +9,7 @@ Two rules drive the whole file:
 1. We store *names*, never *values*. Cookie names but not cookie values,
    storage keys but not storage contents, hostnames but not query strings.
 2. Anything that survives normalisation must still be useful to a
-   fingerprint rule.
+   fingerprint rule in Phase 2.
 """
 
 from __future__ import annotations
@@ -273,6 +273,8 @@ _BLOCK_MARKERS = (
     "captcha",
     "unusual traffic",
     "request blocked",
+    "the requested url was rejected",
+    "접속하신 사이트를 임시 보호 중",
     "security verification",      # STCLab bot manager challenge page
     "비정상적인 접근",
     "접근이 차단",
@@ -305,13 +307,27 @@ _EVIDENCE_CHANNELS = ("scripts", "window_keys", "cookie_names",
                       "csp_hosts", "identifiers", "third_party_domains")
 
 
-def detect_thin(counts: dict | None, title: str = "") -> str | None:
+def detect_thin(counts: dict | None, title: str = "", visible_text: str = "") -> str | None:
     """Return why this page is a stand-in rather than the site, or None.
 
     Requires an interstitial title *and* an empty page. Either one alone is
     not enough: a plain site is empty but real, and a page that merely
     mentions maintenance is real but not empty.
     """
+    # A short application error screen can carry the normal site title, tags,
+    # and HTTP 200. Its navigation controls are not a usable homepage observation.
+    body = " ".join((visible_text or "").split())
+    if (len(body) < 600
+            and body.startswith("홈페이지 이용 중 오류가 발생하였습니다.")
+            and "로그인페이지로 이동" in body and "메인화면으로 이동" in body):
+        return "application error screen"
+    # Hosting placeholders and closure notices can load their own analytics;
+    # those tags describe the placeholder, never the former consumer service.
+    normalized = " ".join((title or "").lower().split())
+    if re.fullmatch(r"대한민국 no\.?\s*1 카페24 호스팅", normalized):
+        return "hosting default page"
+    if re.fullmatch(r"(?:[\w .+-]+ )?서비스 종료 안내", normalized):
+        return "service closure notice"
     if not counts:
         return None
     marker = next((m for m in _INTERSTITIAL_TITLE_MARKERS

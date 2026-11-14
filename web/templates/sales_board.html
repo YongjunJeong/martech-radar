@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}기업 살펴보기 · MarTech Radar{% endblock %}
+{% block content %}
+<div class="board-toolbar">
+<div class="sales-heading">
+  <div><p class="eyebrow">모니터링 중인 기업 {{ total }}곳</p>
+  <h1>기업 살펴보기</h1>
+  <p class="lede">연락할 이유가 있는지, 먼저 웹사이트에서 관측한 근거를 확인하세요.</p></div>
+</div>
+<form class="sales-search" method="get" role="search" data-filter-form>
+<input type="hidden" name="status" value="all">
+<div class="search-row">
+<input type="search" name="q" value="{{ q }}" aria-label="기업 이름" placeholder="기업 이름으로 검색" autocomplete="off">
+<p class="filter-pending" data-filter-status role="status" hidden><span data-filter-message>입력·선택하면 자동 반영</span> <button type="button" class="filter-retry" data-filter-retry hidden>다시 시도</button></p>
+<a href="{{ request.url.path }}?status=all" data-filter-reset {% if not (q or industry or solution_type or observation) %}hidden{% endif %}>전체 초기화</a>
+<noscript><button type="submit">검색</button></noscript>
+</div>
+<div class="filter-panel">
+{% include "_sales_filter_summary.html" %}
+<details class="filter-disclosure">
+<summary class="filter-summary" aria-label="검색 필터 펼치기 또는 접기"><span class="filter-toggle"><span class="control-label">필터 <span class="when-closed">펼치기</span><span class="when-open">접기</span></span>{% include "_disclosure_chevron.html" %}</span></summary>
+<div class="filter-fields">
+{% if multi_industries %}<fieldset class="industry-filter observation-filter">
+<legend>업종 <span>여러 개 선택 가능</span></legend>
+<div class="observation-options">{% for code,label in industries.items() %}<label class="observation-option solution-type-option"><input type="checkbox" name="industry" value="{{ code }}" {% if code in industry %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}</div>
+<p class="observation-filter-help">선택한 업종 중 하나에 속한 기업을 봅니다. 선택하지 않으면 전체 업종을 봅니다.</p>
+</fieldset>{% else %}<label>업종<select name="industry"><option value="">전체 업종</option>{% for code,label in industries.items() %}<option value="{{ code }}" {{ 'selected' if industry==code }}>{{ label }}</option>{% endfor %}</select></label>{% endif %}
+{% if multi_solution_types %}<fieldset class="solution-types-filter observation-filter">
+<legend>솔루션 유형 <span>여러 개 선택 가능</span></legend>
+<div class="observation-options">{% for code,label in solution_types.items() %}<label class="observation-option solution-type-option"><input type="checkbox" name="solution_type" value="{{ code }}" {% if code in solution_type %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}</div>
+<p class="observation-filter-help">선택한 유형 중 하나에 속하는 솔루션을 봅니다. 선택하지 않으면 전체 유형을 봅니다.</p>
+</fieldset>{% else %}<label class="solution-type-filter">솔루션 유형<select name="solution_type"><option value="">전체 유형</option>{% for code,label in solution_types.items() %}<option value="{{ code }}" {{ 'selected' if solution_type==code }}>{{ label }}</option>{% endfor %}</select></label>{% endif %}
+{% if multi_observation %}<fieldset class="observation-filter">
+<legend>관측 태그 <span>여러 개 선택 가능</span></legend>
+<div class="observation-options">{% for code,label in observation_filters.items() %}<label class="observation-option"><input type="checkbox" name="observation" value="{{ code }}" {% if code in observation %}checked{% endif %}><span class="observation-tag pattern-{{ code }}">{{ label }}</span></label>{% endfor %}</div>
+<p class="observation-filter-help">선택한 유형 안에서, 태그 중 하나라도 해당하면 표시합니다. 태그를 선택하지 않으면 태그 제한 없이 봅니다.</p>
+</fieldset>{% elif observation_filters is defined %}<label class="observation-filter">관측 태그<select name="observation"><option value="">전체 태그</option>{% for code,label in observation_filters.items() %}<option value="{{ code }}" {{ 'selected' if observation==code }}>{{ label }}</option>{% endfor %}</select></label>{% endif %}
+</div>
+</details>
+</div>
+</form>
+<script src="/static/sales_filters.js?v=20261026-filter-compact-1" defer></script>
+</div>
+<div data-sales-results data-status="{{ status }}" data-page="{{ page_number }}" data-count="{{ filtered }}">
+<div class="sales-scope"><p>{% if industry_filter_label %}<strong>{{ industry_filter_label }}</strong> 업종에서 찾습니다. {% endif %}{% if observation %}{% if solution_type %}<strong>{{ solution_type_label }}</strong> 중 {% endif %}<strong>{{ observation_label }}</strong> 태그가 있는 <strong>{{ scoped_total }}개 기업</strong>입니다. 상태와 요약은 선택한 조건에 맞는 솔루션 기준입니다.{% elif solution_type %}<strong>{{ solution_type_label }}</strong>에서 변화가 관측된 <strong>{{ scoped_total }}개 기업</strong>입니다. 상태와 변화 요약은 선택한 유형 기준입니다.{% elif q or industry %}검색·업종 조건에 맞는 <strong>{{ scoped_total }}개 기업</strong>을 상태별로 나눴습니다.{% else %}<strong>{{ total }}개 기업</strong>을 지금 할 일에 따라 나눴습니다.{% endif %} 상태를 누르면 아래 목록이 바뀝니다.</p>
+<a href="{{ request.url.include_query_params(status='all', page=1) }}" class="all-companies {{ 'selected' if status=='all' }}" {% if status=='all' %}aria-current="true"{% endif %}>{{ '조건에 맞는 기업' if solution_type or observation or q or industry else '전체 기업' }} {{ scoped_total }}곳{% if status=='all' %} · 선택됨{% endif %}</a></div>
+<nav class="sales-stats" aria-label="기업 상태별 목록">
+{% for key,view in views.items() %}<a href="{{ request.url.include_query_params(status=key, page=1) }}" class="stat-card {{ key }} {{ 'selected' if status==key }}" {% if status==key %}aria-current="true"{% endif %}><span class="stat-label">{{ view.label }}{% if status==key %} <small class="selection-label">선택됨</small>{% endif %}</span><strong>{{ view_counts[key] }}<small>곳</small></strong><small>{{ view.hint }}</small></a>{% endfor %}
+</nav>
+<section class="sales-list-heading" id="company-list" aria-labelledby="company-list-title">
+<p class="eyebrow">선택한 상태의 기업 목록</p>
+<h2 id="company-list-title" tabindex="-1">{{ current_view.label }} <span>{{ filtered }}곳</span></h2>
+<p>{{ current_view.description }}</p>
+{% if observation %}<p class="list-guidance">선택한 태그 중 하나에 해당하는 솔루션만 표시합니다. 태그를 바꾸면 모든 상태에서 찾으며, 수집 점검이 필요한 기업도 별도 상태로 구분합니다.</p>{% elif solution_type %}<p class="list-guidance">기업 이름·업종 조건도 함께 적용됩니다. 선택한 유형의 변화가 없는 기업은 제외하며, 수집 점검이 필요한 기업은 ‘아직 판단 어려움’에 표시합니다.</p>{% endif %}
+{% if status=='watch' and view_counts.contact==0 %}<p class="list-guidance">{% if q or industry %}현재 검색 조건에서는{% else %}현재{% endif %} ‘연락 전 확인’에 해당하는 기업이 없습니다. 아래 기업은 재확인을 기다리는 단계입니다.</p>{% endif %}
+{% if status=='pending' %}<p class="pending-breakdown">첫 수집 대기 {{ counts.waiting }}곳 · 비교 기록 부족 {{ counts.baseline }}곳 · 수집 점검 필요 {{ counts.check }}곳</p>{% endif %}
+{% include "_sales_pattern_guide.html" %}
+</section>
+<div class="sales-grid">
+{% for card in cards %}
+<article class="account-card">
+<div class="account-identity">
+<div class="account-top"><span class="sales-badge {{ card.bucket }}">{{ card.label }}</span> <span class="muted">{{ card.industry_label }}</span></div>
+<h3><a href="/companies/{{ card.id }}{% if card.filter_query is defined %}{% if card.filter_query %}?{{ card.filter_query }}{% endif %}{% else %}{% if solution_type %}?solution_type={{ solution_type }}{% endif %}{% if observation %}{{ '&amp;'|safe if solution_type else '?' }}observation={{ observation }}{% endif %}{% endif %}">{{ card.company }}</a></h3>
+<p class="account-reason">{{ card.reason }}</p>
+<small class="account-observed">최근 정상 수집 {{ card.last_good }} · 정상 수집 {{ card.good_count }}회</small>
+</div>
+<div class="account-observations">
+{% if card.events %}
+{% include "_sales_change_overview.html" %}
+<details class="solution-summaries">
+<summary>솔루션별 변화 {{ card.events|length }}개 보기</summary>
+<p class="solution-order">반복 관측 기준 충족 순 · 같은 단계에서는 솔루션 이름순</p>
+<div class="mini-changes">{% for e in card.events %}<section class="mini-change">
+<div class="mini-change-title"><span class="change-category">{{ e.use }}</span> <strong>{{ e.name }}</strong> {% with pattern=e.pattern %}{% include "_sales_pattern_tag.html" %}{% endwith %}</div>
+<p class="change-dates">이전 {{ e.previous_date }} {{ e.previous_result }} → 최근 {{ e.latest }} {{ e.latest_result }}</p>
+{% with compact_evidence=true %}{% include "_sales_observation_counts.html" %}{% endwith %}
+<p class="solution-review">{{ e.review_label }}</p>
+{% if e.pattern is defined and e.pattern.fluctuating %}<p class="pattern-explanation">{{ e.pattern.fluctuation_note }}</p>{% endif %}
+</section>{% endfor %}</div>
+<a class="solution-evidence-link" href="/companies/{{ card.id }}{% if card.filter_query is defined %}{% if card.filter_query %}?{{ card.filter_query }}{% endif %}{% else %}{% if solution_type %}?solution_type={{ solution_type }}{% endif %}{% if observation %}{{ '&amp;'|safe if solution_type else '?' }}observation={{ observation }}{% endif %}{% endif %}#solution-changes">관측 이력과 실제 검출 근거는 기업 상세에서 보기 →</a>
+</details>
+{% if 'stable' in observation %}{% set stable_tools = card.tools|selectattr('pattern.key', 'equalto', 'stable')|list %}{% if stable_tools %}<details class="solution-summaries stable-matches"><summary>함께 선택된 ‘계속 검출’ 솔루션 {{ stable_tools|length }}개 보기</summary><p class="tool-summary">{% for tool in stable_tools %}{{ tool.name }}{% if not loop.last %}, {% endif %}{% endfor %}</p></details>{% endif %}{% endif %}
+{% else %}{% if card.tools and card.bucket in ['baseline', 'steady'] and card.tools[0].pattern is defined %}<p class="pattern-summary">{% with pattern=card.tools[0].pattern %}{% include "_sales_pattern_tag.html" %}{% endwith %} {{ card.tool_count }}개</p>{% endif %}<p class="tool-summary">{% if card.tools %}관측 솔루션 {{ card.tool_count }}개 · {% for tool in card.tools[:3] %}{{ tool.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}확인된 솔루션만 표시합니다. 미검출을 미사용으로 해석하지 않습니다.{% endif %}</p>{% endif %}
+</div>
+<div class="account-action">
+{% if card.bucket=='watch' %}{% include "_sales_waiting.html" %}{% else %}
+<p class="next-step"><strong>지금 할 일</strong> {{ card.next_step }}</p>
+{% endif %}
+<div class="account-bottom">{% if card.bucket=='check' %}<small>최근 수집: {{ card.last_status }}</small>{% endif %}<a href="/companies/{{ card.id }}{% if card.filter_query is defined %}{% if card.filter_query %}?{{ card.filter_query }}{% endif %}{% else %}{% if solution_type %}?solution_type={{ solution_type }}{% endif %}{% if observation %}{{ '&amp;'|safe if solution_type else '?' }}observation={{ observation }}{% endif %}{% endif %}">기업 상세 보기 →</a></div>
+</div>
+</article>
+{% else %}
+<div class="sales-empty"><h3>{{ '이 상태에서 선택한 관측 태그에 해당하는 기업이 없습니다.' if observation else ('이 상태에서 선택한 솔루션 유형의 변화가 있는 기업이 없습니다.' if solution_type else ('검색 조건에 해당하는 기업이 없습니다.' if q or industry else current_view.empty)) }}</h3>
+{% if status=='contact' and view_counts.watch %}<p>재확인을 기다리는 기업 {{ view_counts.watch }}곳이 있습니다. 다음 수집에서도 같은 결과가 이어지는지 확인한 뒤 연락을 판단하세요.</p><a href="{{ request.url.include_query_params(status='watch',page=1) }}">재확인 대기 {{ view_counts.watch }}곳 보기 →</a>
+{% else %}<p>다른 상태를 선택하거나 전체 기업에서 찾을 수 있습니다.</p><a href="{{ request.url.include_query_params(status='all',page=1) }}">전체 기업 {{ scoped_total }}곳 보기 →</a>{% endif %}
+</div>
+{% endfor %}
+</div>
+{% if pages > 1 %}<nav class="pagination" aria-label="페이지 이동">{% if page_number>1 %}<a href="{{ request.url.include_query_params(page=page_number-1) }}">← 이전</a>{% endif %}<span>{{ page_number }} / {{ pages }}</span>{% if page_number<pages %}<a href="{{ request.url.include_query_params(page=page_number+1) }}">다음 →</a>{% endif %}</nav>{% endif %}
+</div>
+{% endblock %}

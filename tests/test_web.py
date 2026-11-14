@@ -111,8 +111,8 @@ def test_unknown_ids_are_404_not_500(client):
     assert client.get("/vendors/nope").status_code == 404
 
 
-def test_a_blocked_company_is_not_listed_as_greenfield(client):
-    body = client.get("/companies?state=greenfield").text
+def test_a_blocked_company_is_not_listed_as_observed(client):
+    body = client.get("/companies?state=observed").text
     assert "무보유몰" in body
     assert "차단몰" not in body, "a bot wall is not an empty stack"
 
@@ -124,13 +124,13 @@ def test_a_blocked_company_appears_under_its_own_filter(client):
 
 def test_a_blocked_company_detail_refuses_to_report_a_stack(client):
     body = client.get("/companies/walled").text
-    assert "스택을 보고할 수 없습니다" in body
+    assert "검출된 솔루션을 판단할 수 없습니다" in body
 
 
-def test_greenfield_signal_reaches_the_signal_inbox(client):
+def test_static_stack_does_not_generate_an_opportunity_signal(client):
     body = client.get("/signals").text
-    assert "무보유몰" in body
-    assert 'href="/companies/open"' in body, "the inbox must link into the company"
+    assert "무보유몰" not in body
+    assert "공략 가능" not in body
 
 
 def test_a_verdict_carries_its_evidence_into_the_page(client):
@@ -142,14 +142,14 @@ def test_a_verdict_carries_its_evidence_into_the_page(client):
 
 def test_company_detail_shows_the_run_timeline(client):
     body = client.get("/companies/holder").text
-    assert "타임라인" in body
+    assert "관측 이력" in body
     # The label is translated; the run numbers are not.
     assert "실행 1" in body and "실행 2" in body
 
 
 def test_a_skipped_run_is_marked_in_the_timeline(client):
     body = client.get("/companies/walled").text
-    assert "이력에서 제외" in body
+    assert "비교에서 제외 · 정상 수집 아님" in body
 
 
 def test_vendor_page_lists_its_users_and_its_patterns(client):
@@ -162,6 +162,9 @@ def test_vendor_share_counts_only_judged_companies(client):
     # Two judged companies, one running Braze -> 50%, not 33%.
     body = client.get("/vendors?category=engagement").text
     assert "50%" in body
+    assert "솔루션 현황" in body and "검출 비율" in body
+    assert "기업별 마지막 정상 수집 결과" in body
+    assert "전체 시장점유율이나 계약 현황을 뜻하지 않습니다" in body
 
 
 def test_unseen_fingerprints_are_hidden_by_default_and_visible_on_request(client):
@@ -170,20 +173,22 @@ def test_unseen_fingerprints_are_hidden_by_default_and_visible_on_request(client
     assert "MoEngage" in client.get("/vendors?category=engagement&unseen=1").text
 
 
-def test_industry_overview_separates_the_three_buckets(client):
+def test_overview_groups_collection_states_under_pending(client):
     body = client.get("/").text
-    assert "engagement 보유" in body and "미보유 (greenfield)" in body and "판정 불가" in body
+    assert "연락 전 확인" in body and "재확인 대기" in body
+    assert "확인된 변화 없음" in body and "아직 판단 어려움" in body
+    pending = client.get("/?status=pending").text
+    assert "비교 기록 부족" in pending and "수집 점검 필요" in pending
 
 
-def test_engagement_is_the_first_category_shown(client):
-    """Jinja's groupby re-sorts alphabetically and buried engagement under
-    advertising. The commercially decisive category leads."""
+def test_categories_use_alphabetical_order(client):
+    """Category order has no commercial or vendor priority."""
     import re
     body = client.get("/companies/holder").text
     cats = re.findall(r'<h3 class="cat">([^<]+)</h3>', body)
-    assert cats and cats[0] == "engagement", cats
+    assert cats and cats[0] == "광고", cats
     vendors = re.findall(r'<h2 class="cat">([^<]+)</h2>', client.get("/vendors").text)
-    assert vendors and vendors[0] == "engagement", vendors
+    assert vendors and vendors[0] == "광고", vendors
 
 
 def test_the_dashboard_renders_in_english_with_no_korean_chrome(tmp_path_factory, client):
@@ -243,5 +248,11 @@ def test_a_company_brief_is_one_click_away(client):
     brief = client.get("/companies/holder/brief")
     assert brief.status_code == 200 and "Braze" in brief.text and "greenfield" not in brief.text
     walled = client.get("/companies/walled/brief").text
-    assert "콜드메일" in walled                    # refused, not blank
+    assert "관측 근거가 없어" in walled                    # refused, not blank
     assert client.get("/companies/nobody/brief").status_code == 404
+
+
+def test_review_queue_does_not_prioritize_static_stacks(client):
+    body = client.get("/calls").text
+    assert "연락 전 확인" in body and "현재 연락 전 확인할 기업이 없습니다" in body
+    assert "무보유몰" not in body

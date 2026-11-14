@@ -1,0 +1,6 @@
+<div class="waiting-guidance">
+<div class="waiting-date"><span>다음 확인 예정</span> <strong>{{ card.waiting.date_label }}</strong> <span>{{ card.waiting.relative }}</span></div>
+<p class="waiting-zone">{{ '한국 시간 기준' if card.waiting.timezone=='Asia/Seoul' else card.waiting.timezone }}{% if card.waiting.multiple_urls %} · 여러 페이지 중 가장 빠른 일정{% endif %}</p>
+<div class="waiting-results"><strong>기다리는 결과</strong>{% for result in card.waiting.results %}<p>{{ result }}</p>{% endfor %}</div>
+<p class="waiting-note">{{ card.waiting.note }}</p>
+</div>

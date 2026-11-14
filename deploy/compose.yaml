@@ -1,0 +1,70 @@
+name: martech-radar-staging
+x-common: &common
+  init: true
+  user: "1000:1000"
+  read_only: true
+  tmpfs:
+    - /tmp:size=512m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  volumes:
+    - type: bind
+      source: ${RADAR_STAGE_HOME:?Set RADAR_STAGE_HOME to a NEW isolated workspace}
+      target: /workspace
+      bind:
+        create_host_path: false
+  restart: "no"
+services:
+  web:
+    <<: *common
+    environment:
+      RADAR_TELEMETRY_ROLE: web
+    build:
+      context: ..
+      target: web
+    image: martech-radar-web:staging
+    ports: ["127.0.0.1:18848:8848"]
+    mem_limit: 768m
+    cpus: 1
+  worker:
+    <<: *common
+    environment:
+      RADAR_TELEMETRY_ROLE: worker
+    profiles: [collector]
+    build:
+      context: ..
+      target: collector
+    image: martech-radar-collector:staging
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp_profile.json
+    shm_size: 1gb
+    mem_limit: 4g
+    cpus: 2
+    stop_grace_period: 120s
+  scheduled:
+    <<: *common
+    profiles: [scheduled]
+    build:
+      context: ..
+      target: web
+    image: martech-radar-web:staging
+    environment:
+      RADAR_REQUIRE_COLLECTION: "1"
+    mem_limit: 512m
+    cpus: 0.5
+    healthcheck: {disable: true}
+    stop_grace_period: 120s
+    command: [/opt/radar/bin/weekly-scan, --due, --external-worker]
+  review:
+    <<: *common
+    profiles: [operations]
+    image: martech-radar-web:staging
+    build:
+      context: ..
+      target: web
+    mem_limit: 512m
+    cpus: 0.5
+    healthcheck: {disable: true}
+    # Pass --day YYYY-MM-DD explicitly; do not silently check the wrong date.
+    command: [python, -m, radar.operations, --help]

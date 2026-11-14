@@ -1,0 +1,5 @@
+<span class="filter-summary-groups">
+{% for key, title, choices, selected, empty in [('industry', '업종', industries, industry, '전체'), ('solution_type', '솔루션 유형', solution_types, solution_type, '전체'), ('observation', '관측 태그', observation_filters, observation, '전체')] %}
+<span class="filter-summary-group" data-filter-group="{{ key }}" data-filter-title="{{ title }}" data-empty-label="{{ empty }}"><span class="filter-group-heading"><span class="filter-summary-label">{{ title }}</span><button type="button" class="filter-clear" data-filter-clear aria-label="{{ title }} 전체 해제" hidden>전체 해제</button></span><span class="filter-summary-values" data-filter-values>{% for code, label in choices.items() if code in selected %}<span class="{{ 'observation-tag pattern-' ~ code if key=='observation' else 'filter-value' }}">{{ label }}</span>{% else %}<span class="filter-summary-empty">{{ empty }}</span>{% endfor %}</span></span>
+{% endfor %}
+</span>

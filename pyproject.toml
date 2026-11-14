@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "martech-radar"
 version = "0.1.0"
-description = "Vendor-neutral website technology observation and change detection."
+description = "Evidence-based monitoring of public marketing technology signals and AI-assisted sales preparation."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -32,3 +32,7 @@ packages = ["radar", "web"]
 # *override* fingerprints in its workspace, but never needs to supply them.
 radar = ["probe.js", "fingerprints/*.yaml"]
 web = ["templates/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+# Operational snapshots under data/ may contain copies of old tests.
+testpaths = ["tests"]

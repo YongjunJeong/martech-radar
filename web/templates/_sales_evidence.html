@@ -1,0 +1,12 @@
+{% include "_sales_observation_counts.html" %}
+{% if evidence_expanded %}<div class="change-evidence expanded-evidence"><h4>관측 이력과 검출 근거</h4>{% else %}<details class="change-evidence">
+<summary>확인 날짜와 검출 근거 보기</summary>
+{% endif %}
+{% if compact_evidence %}<p class="evidence-note">{{ e.confidence }}</p>{% endif %}
+<p class="muted">정상 수집 기준 · 한국 시간{% if e.observations > 8 %} · 최근 8회 표시{% endif %}. 실패·차단된 수집은 비교 횟수에서 제외합니다.</p>
+<ol class="observation-history">{% for point in e.history %}<li><time>{{ point.date }}</time><strong>{{ point.result }}</strong></li>{% endfor %}</ol>
+<p><strong>마지막으로 검출된 근거 · {{ e.last_seen }}</strong></p>
+{% if e.latest_result == '미검출' %}<p class="muted">아래는 이전에 검출됐을 때의 근거입니다. 최근에는 검출 기준을 충족하는 흔적을 찾지 못했습니다.</p>{% endif %}
+<ul class="match-evidence">{% for match in e.evidence %}<li><span>{{ match.label }}</span> <code>{{ match.value }}</code><small>{{ match.date }} · {{ match.host }} · 관측 #{{ match.scan_id }}</small></li>{% else %}<li>표시할 직접 검출 근거가 없습니다.</li>{% endfor %}</ul>
+<p class="muted">검출은 수집한 페이지에서 솔루션의 흔적을 확인했다는 뜻입니다. 로그인·동의 여부와 로딩 조건에 따라 결과가 달라질 수 있습니다.</p>
+{% if evidence_expanded %}</div>{% else %}</details>{% endif %}

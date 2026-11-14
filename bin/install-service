@@ -87,7 +87,7 @@ Description=MarTech Radar database snapshot
 Type=oneshot
 Environment=RADAR_HOME=$HOME_DIR
 Environment=TZ=$TZ_NAME
-ExecStart=$ROOT/bin/radar backup --keep 14
+ExecStart=$ROOT/bin/radar backup --keep 3
 UNIT
 
 cat > "$UNITS/radar-backup.timer" <<UNIT

@@ -21,8 +21,8 @@ from radar.registry import Registry
 from radar.store import Store
 
 CATEGORY_ORDER = [
-    "engagement", "experimentation", "analytics",
-    "attribution", "advertising", "platform",
+    "advertising", "analytics", "attribution",
+    "engagement", "experimentation", "platform",
 ]
 
 # What a state means for the reader, in the order we want to see them.
@@ -39,8 +39,7 @@ def _category_key(name: str) -> int:
 def group_by_category(rows: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
     """Group while keeping CATEGORY_ORDER.
 
-    Jinja's own `groupby` re-sorts alphabetically, which buried engagement —
-    the one category the whole tool exists for — under "advertising".
+    Categories use a stable alphabetical order, without commercial priority.
     """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -59,13 +58,12 @@ def company_rows(store: Store, industries: dict[str, str],
     summary_map = sig.summaries(store)
     rows: list[dict[str, Any]] = []
 
-    for target in store.targets():
+    for target in store.targets(enabled_only=True):
         target_id = target["id"]
         cover = summary_map.get(target_id)
         stack = list(cover.stack) if cover else []
         direct = [r for r in stack if not r["indirect_only"]]
         states = {c.fingerprint_id: c.state for c in cover.changes} if cover else {}
-        engagement = [r for r in direct if r["category"] == sig.ENGAGEMENT]
         site = cover.site if cover else None
         urls = json.loads(target["urls_json"])
         off_domain = sig.lands_off_domain(urls, site)
@@ -84,7 +82,7 @@ def company_rows(store: Store, industries: dict[str, str],
             "note": target["note"],
             "urls": urls,
             "enabled": bool(target["enabled"]),
-            "judged": bool(cover and cover.judged),
+            "judged": bool(cover and cover.judged and not off_domain),
             "off_domain": off_domain,
             "landing": list(site.hosts) if site else [],
             "host_shift": (site.shift.as_dict()
@@ -95,12 +93,12 @@ def company_rows(store: Store, industries: dict[str, str],
             "good_scans": cover.good_scans if cover else 0,
             "vendor_count": len(direct),
             "counts": counts,
-            "engagement": [
+            "observed": [
                 {"id": r["fingerprint_id"], "name": r["name"],
                  "state": states.get(r["fingerprint_id"], "")}
-                for r in engagement
+                for r in direct
             ],
-            "engagement_pending": [
+            "pending": [
                 {"id": c.fingerprint_id, "name": c.name}
                 for c in sig.pending_removal(cover.changes if cover else [])
             ],
@@ -127,7 +125,7 @@ def industry_rows(companies: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "industry": row["industry"],
             "label": row["industry_label"],
             "companies": 0, "judged": 0, "unjudged": 0,
-            "with_engagement": 0, "pending": 0, "greenfield": 0,
+            "with_tools": 0, "pending": 0, "no_tools": 0,
             "vendors": {},
         })
         entry["companies"] += 1
@@ -137,14 +135,12 @@ def industry_rows(companies: list[dict[str, Any]]) -> list[dict[str, Any]]:
         entry["judged"] += 1
         if row["off_domain"]:
             entry["pending"] += 1
-        elif row["engagement"]:
-            entry["with_engagement"] += 1
-            for vendor in row["engagement"]:
+        elif row["observed"]:
+            entry["with_tools"] += 1
+            for vendor in row["observed"]:
                 entry["vendors"][vendor["name"]] = entry["vendors"].get(vendor["name"], 0) + 1
-        elif row["engagement_pending"]:
-            entry["pending"] += 1
         else:
-            entry["greenfield"] += 1
+            entry["no_tools"] += 1
 
     rows = list(grouped.values())
     for row in rows:
@@ -282,11 +278,11 @@ def overview(store: Store, companies: list[dict[str, Any]]) -> dict[str, Any]:
         "company_count": len(companies),
         "judged_count": len(judged),
         "unjudged": [c for c in companies if not c["judged"]],
-        "with_engagement": [c for c in judged if c["engagement"] and not c["off_domain"]],
+        "with_tools": [c for c in judged if c["observed"] and not c["off_domain"]],
         "pending": [c for c in judged if c["off_domain"]
-                    or (not c["engagement"] and c["engagement_pending"])],
-        "greenfield": [c for c in judged if not c["off_domain"]
-                       and not c["engagement"] and not c["engagement_pending"]],
+                    or (not c["observed"] and c["pending"])],
+        "no_tools": [c for c in judged if not c["off_domain"]
+                       and not c["observed"]],
         "signal_counts": by_kind,
         "signal_total": len(found),
     }

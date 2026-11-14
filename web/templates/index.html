@@ -16,15 +16,15 @@
 
   {% if overview.judged_count %}
     <h1 class="statement">{{ t('overview.statement', judged=overview.judged_count,
-                                greenfield=overview.greenfield|length)|safe }}</h1>
+                                no_tools=overview.no_tools|length)|safe }}</h1>
   {% else %}
     <h1 class="statement">{{ t('overview.statement.empty') }}</h1>
   {% endif %}
 
   <p class="figures">
     <a href="/companies"><b>{{ overview.company_count }}</b>{{ t('overview.card.registered') }}</a>
-    <a href="/companies?state=engagement"><b>{{ overview.with_engagement|length }}</b>{{ t('overview.card.holders') }}</a>
-    <a href="/companies?state=greenfield"><b>{{ overview.greenfield|length }}</b>{{ t('overview.card.greenfield') }}</a>
+    <a href="/companies?state=observed"><b>{{ overview.with_tools|length }}</b>{{ t('overview.card.holders') }}</a>
+    <a href="/companies?state=no_tools"><b>{{ overview.no_tools|length }}</b>{{ t('overview.card.no_tools') }}</a>
     <a href="/companies?state=unjudged"><b>{{ overview.unjudged|length }}</b>{{ t('overview.card.unjudged') }}</a>
   </p>
 
@@ -46,7 +46,7 @@
   <thead><tr>
     <th>{{ t('common.industry') }}</th><th class="n">{{ t('common.companies') }}</th>
     <th class="n">{{ t('overview.col.holders') }}</th>
-    <th class="n">{{ t('overview.col.greenfield') }}</th>
+    <th class="n">{{ t('overview.col.no_tools') }}</th>
     <th class="n">{{ t('overview.col.unjudged') }}</th>
     <th>{{ t('overview.col.held_vendors') }}</th>
   </tr></thead>
@@ -55,8 +55,8 @@
     <tr>
       <td><a href="/companies?industry={{ row.industry }}">{{ row.label }}</a></td>
       <td class="n">{{ row.companies }}</td>
-      <td class="n">{{ row.with_engagement or '·' }}</td>
-      <td class="n {{ 'hot' if row.greenfield }}">{{ row.greenfield or '·' }}</td>
+      <td class="n">{{ row.with_tools or '·' }}</td>
+      <td class="n {{ 'hot' if row.no_tools }}">{{ row.no_tools or '·' }}</td>
       <td class="n muted">{{ row.unjudged or '·' }}</td>
       <td class="vendors muted">
         {%- for name, count in row.vendors -%}
@@ -68,7 +68,7 @@
   </tbody>
 </table>
 
-<h2>{{ t('overview.engagement_share') }} <a class="more" href="/vendors">{{ t('overview.all_vendors') }}</a></h2>
+<h2>{{ t('overview.vendor_share') }} <a class="more" href="/vendors">{{ t('overview.all_vendors') }}</a></h2>
 <table>
   <thead><tr><th>{{ t('common.vendor') }}</th><th class="n">{{ t('common.company_count') }}</th><th>{{ t('common.share') }}</th></tr></thead>
   <tbody>

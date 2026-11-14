@@ -1,0 +1,64 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; background:#0d1117; }
+  body { display:flex; align-items:center; justify-content:center;
+         font-family: ui-monospace,"JetBrains Mono",Menlo,"D2Coding",monospace; }
+  .frame { width:1180px; }
+  .caption { color:#8b949e; font-size:17px; margin:0 0 14px 6px;
+             font-family:-apple-system,"Pretendard","Noto Sans KR",sans-serif; }
+  .caption b { color:#e6edf3; font-weight:600; }
+  .term { background:#161b22; border:1px solid #30363d; border-radius:10px;
+          box-shadow:0 20px 60px rgba(0,0,0,.5); overflow:hidden; }
+  .bar { display:flex; gap:7px; padding:11px 14px; background:#21262d;
+         border-bottom:1px solid #30363d; align-items:center; }
+  .dot { width:11px;height:11px;border-radius:50%; }
+  .bar span.t { margin-left:10px; color:#8b949e; font-size:12px; }
+  pre { margin:0; padding:18px 20px; min-height:430px; color:#c9d1d9;
+        font-size:14px; line-height:1.55; white-space:pre-wrap; word-break:break-all; }
+  .p { color:#7ee787; } .c { color:#e6edf3; }
+  .cur { display:inline-block; width:8px; height:16px; background:#58a6ff;
+         vertical-align:-3px; animation:b 1s steps(1) infinite; }
+  @keyframes b { 50% { opacity:0 } }
+  .ok { color:#7ee787 } .warn { color:#e3b341 } .hot { color:#ff7b72 } .dim { color:#8b949e }
+</style></head><body>
+<div class="frame">
+  <p class="caption" id="cap"></p>
+  <div class="term">
+    <div class="bar"><span class="dot" style="background:#ff5f56"></span>
+      <span class="dot" style="background:#ffbd2e"></span>
+      <span class="dot" style="background:#27c93f"></span>
+      <span class="t">martech-deal-radar</span></div>
+    <pre id="screen"></pre>
+  </div>
+</div>
+<script>
+const SCENES = [];
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function paint(line) {
+  let h = esc(line);
+  h = h.replace(/\bDETECTED\b/g, '<span class="ok">DETECTED</span>')
+       .replace(/\bPROBABLE\b/g, '<span class="warn">PROBABLE</span>')
+       .replace(/\bBLOCKED\b|\bTHIN\b|not judged/g, m => '<span class="hot">'+m+'</span>')
+       .replace(/\bOK\b/g, '<span class="ok">OK</span>')
+       .replace(/(strong|weak)/g, '<span class="dim">$1</span>');
+  return h;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => {
+  const screen = document.getElementById('screen'), cap = document.getElementById('cap');
+  for (const sc of SCENES) {
+    cap.innerHTML = '<b>' + esc(sc.caption) + '</b>';
+    screen.innerHTML = '<span class="p">$</span> <span class="c"></span><span class="cur"></span>';
+    const cmdEl = screen.querySelector('.c');
+    await sleep(500);
+    for (const ch of sc.cmd) { cmdEl.textContent += ch; await sleep(22); }
+    await sleep(450);
+    screen.innerHTML = '<span class="p">$</span> <span class="c">' + esc(sc.cmd) + '</span>\n\n';
+    const lines = sc.out.split('\n');
+    for (const ln of lines) { screen.innerHTML += paint(ln) + '\n'; await sleep(55); }
+    await sleep(sc.hold);
+  }
+  window.__demoDone = true;
+})();
+</script></body></html>

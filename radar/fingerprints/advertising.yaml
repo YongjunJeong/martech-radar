@@ -80,6 +80,7 @@ fingerprints:
       hosts: [adinsight.co.kr, cdn.adinsight.co.kr]
       window: ["adinsight"]
 
+  # --- Korea pack (2026-09): mined from 996-site stored evidence ------------
 
   - id: tpmn
     name: TPMN
@@ -103,7 +104,7 @@ fingerprints:
     vendor_url: https://www.moloco.com
     note: >
       리테일 미디어 이벤트 호스트에 광고주 슬러그가 남는다 —
-      samplemarket-evt.rmp-api.moloco.com 식.
+      lotteon-evt.rmp-api.moloco.com 식.
     signals:
       hosts: [moloco.com]
 

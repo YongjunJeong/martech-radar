@@ -1,4 +1,6 @@
-# A/B testing and feature flags.
+# A/B testing and feature flags. Presence here means the account already
+# has an experimentation habit - the easiest ground for an Insider
+# personalisation pitch, and the hardest for a "you have no tooling" pitch.
 category: experimentation
 fingerprints:
   - id: hackle
@@ -46,6 +48,7 @@ fingerprints:
       hosts: [launchdarkly.com, clientstream.launchdarkly.com, events.launchdarkly.com]
       window: ["LDClient", "ldclient"]
 
+  # --- Korea pack (2026-09): mined from 996-site stored evidence ------------
 
   - id: google_optimize
     name: Google Optimize (sunset)

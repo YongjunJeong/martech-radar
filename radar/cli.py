@@ -23,7 +23,7 @@ from . import workspace
 from . import signals as sig
 from . import brief as brf
 from . import strings as st
-from .store import Store, StoreError
+from .store import Store, StoreError, default_path
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -101,26 +101,31 @@ def _build_parser() -> argparse.ArgumentParser:
         ("changes", "per-vendor change states for one company"),
         ("serve", "run the dashboard"),
         ("worker", "claim queued scans and run them here"),
-        ("brief", "compact evidence-backed brief for one company"),
+        ("brief", "compact factual brief for one company (for the cold-mail skill)"),
         ("digest", "weekly summary of signals and run health"),
         ("unknown-hosts", "third-party hosts no fingerprint accounts for"),
         ("notify", "push not-yet-notified signals to the configured webhook"),
         ("hygiene", "targets whose recent scans keep failing — dead or moved domains"),
         ("suggest-urls", "product-page candidates for single-URL targets, from stored evidence"),
         ("probable", "vendors stuck at PROBABLE — fingerprints worth strengthening"),
-        ("backup", "snapshot the database into backups/ and prune old snapshots"),
+        ("backup", "create a verified database/config recovery archive"),
+        ("calls", "review observed changes with their supporting evidence"),
     ):
         cmd = sub.add_parser(name, help=help_text)
         cmd.add_argument("--db", help="database path (default: ./data/radar.db)")
-        if name in ("serve", "digest", "brief", "signals", "notify"):
+        if name in ("serve", "digest", "brief", "signals", "notify", "calls"):
             cmd.add_argument("--lang", choices=st.languages(),
                              help="override the language in radar.toml")
         if name == "probable":
             cmd.add_argument("--json", action="store_true")
+        if name == "calls":
+            cmd.add_argument("--json", action="store_true")
+            cmd.add_argument("-o", "--out", help="write to this file as well as stdout")
         if name == "backup":
-            cmd.add_argument("--dir", help="where snapshots go (default: <workspace>/backups)")
-            cmd.add_argument("--keep", type=int, default=14,
-                             help="how many snapshots to keep (default 14)")
+            cmd.add_argument("--dir", help="override RADAR_BACKUP_DIRECTORY (default: <workspace>/backups)")
+            cmd.add_argument("--keep", type=int, help="deployment setting or 3")
+            cmd.add_argument('--max-gib', type=float, help='deployment setting or 80; 0 disables')
+            cmd.add_argument('--min-free-gib', type=float, help='deployment setting or 2')
         if name == "suggest-urls":
             cmd.add_argument("--max-per-target", type=int, default=1)
             cmd.add_argument("--json", action="store_true")
@@ -161,6 +166,8 @@ def _build_parser() -> argparse.ArgumentParser:
         if name in ("batch", "redetect"):
             cmd.add_argument("--fingerprints", help="fingerprint directory")
         if name == "batch":
+            cmd.add_argument('--external-worker', action='store_true',
+                             help='queue and wait for the running worker; do not launch a browser here')
             cmd.add_argument("--only", action="append",
                              help="scan only these target ids (repeatable)")
             cmd.add_argument("--industry", action="append",
@@ -459,6 +466,11 @@ def _cmd_targets(args: argparse.Namespace) -> int:
 
 
 def _cmd_batch(args: argparse.Namespace) -> int:
+    if args.external_worker and (args.no_evidence or args.no_interact or args.fingerprints
+                                or args.settle_ms != ScanConfig.settle_ms
+                                or args.concurrency != bat.DEFAULT_CONCURRENCY):
+        print('external-worker uses the worker settings; remove local collector overrides', file=sys.stderr)
+        return 2
     try:
         registry = _load_registry(args.fingerprints)
     except reg.RegistryError as exc:
@@ -483,24 +495,39 @@ def _cmd_batch(args: argparse.Namespace) -> int:
         jobs = bat.jobs_for(store, target_ids=args.only,
                             industries=args.industry, limit=args.limit,
                             tiers=args.tier)
+        audit = {}
+        plan_id = None
         if args.due:
-            jobs, fresh = bat.due_split(store, jobs)
+            considered = {(j.target_id, j.url) for j in jobs}
+            jobs, fresh = bat.due_split(store, jobs, audit=audit)
+            if audit:
+                if (args.note or '').startswith('scheduled '):
+                    audit['items'].extend(dict(target_id=j.target_id, url=j.url, decision='filtered')
+                                          for j in bat.jobs_for(store)
+                                          if (j.target_id, j.url) not in considered)
+                plan_id = store.save_collection_plan(audit, args.note)
             if fresh:
                 # Say what was narrowed, or a cron of --due batches reads as
                 # full coverage when it is anything but.
-                print(f"  {len(fresh)} targets not due yet (scanned within "
-                      f"their tier's cadence) — skipped")
+                print(f"  {len(fresh)} targets deferred by cadence, weekly schedule, "
+                      "existing queue, or daily budget")
         if not jobs:
-            print("nothing to scan after filtering", file=sys.stderr)
+            print("nothing to scan after filtering")
+            return 0 if args.due else 2
+        try:
+            report = asyncio.run(bat.run_batch(
+                store, registry, jobs,
+                scan_config=config,
+                concurrency=args.concurrency,
+                keep_evidence=not args.no_evidence,
+                note=args.note,
+                progress=_say,
+                plan_id=plan_id,
+                external_worker=args.external_worker,
+            ))
+        except bat.ExternalWorkerError as exc:
+            print(str(exc), file=sys.stderr)
             return 2
-        report = asyncio.run(bat.run_batch(
-            store, registry, jobs,
-            scan_config=config,
-            concurrency=args.concurrency,
-            keep_evidence=not args.no_evidence,
-            note=args.note,
-            progress=_say,
-        ))
         print(f"\n{report.summary()}")
         if report.failed:
             print("  not judged:")
@@ -697,7 +724,6 @@ def _cmd_signals(args: argparse.Namespace) -> int:
         if args.industry:
             found = [s for s in found if s.industry in set(args.industry)]
         coverage = store.coverage()
-        quiet = sig.quiet_greenfield(store, args.lang)
 
     if args.json:
         print(json.dumps([s.as_dict() for s in found], ensure_ascii=False, indent=2))
@@ -713,10 +739,6 @@ def _cmd_signals(args: argparse.Namespace) -> int:
             print(f"\n[{current}]  priority {signal.priority}")
         print(f"  {signal.company:14} {signal.industry:12} {signal.headline}")
         print(f"  {'':14} {'':12} {signal.detail}")
-    if quiet:
-        print(f"\n{len(quiet)} target(s) have no engagement platform but too little "
-              f"MarTech to qualify (score < {sig.GREENFIELD_MIN_MATURITY}): "
-              + ", ".join(f"{q['company']}({q['maturity']['score']})" for q in quiet))
     if unjudged:
         # Never let these be mistaken for companies that run nothing.
         print(f"\n{len(unjudged)} target(s) produced no signal because they were "
@@ -886,11 +908,35 @@ def _cmd_watchlist(args: argparse.Namespace) -> int:
 
 
 def _cmd_backup(args: argparse.Namespace) -> int:
+    database = Path(args.db) if args.db else default_path()
+    if not database.is_file():
+        print('backup failed: source database does not exist', file=sys.stderr)
+        return 2
+    try:
+        with Store(database) as store:
+            result = tsk.backup_snapshot(
+                store, Path(args.dir) if args.dir else None, keep=args.keep,
+                max_gib=args.max_gib, min_free_gib=args.min_free_gib)
+    except (OSError, ValueError) as exc:
+        print(f'backup failed: {exc}', file=sys.stderr)
+        return 2
+    _say(f"verified backup written: {result['path']} ({result['size_mb']:.1f} MB)")
+    return 0
+
+
+def _cmd_calls(args: argparse.Namespace) -> int:
+    from . import calls
     with Store(args.db) as store:
-        result = tsk.backup_snapshot(
-            store, Path(args.dir) if args.dir else None, keep=args.keep)
-    _say(f"backup written: {result['path']} ({result['size_mb']:.1f} MB) — "
-         f"{result['kept']} kept, {result['pruned']} pruned")
+        tiers = calls.call_list(store, language=args.lang)
+    if args.json:
+        print(json.dumps(tiers, ensure_ascii=False, indent=2))
+        return 0
+    text = calls.render(tiers, args.lang)
+    print(text)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+        print(f"\n  written to {args.out}", file=sys.stderr)
     return 0
 
 
@@ -925,6 +971,7 @@ _COMMANDS = {
     "home": _cmd_home,
     "backup": _cmd_backup,
     "task": _cmd_task,
+    "calls": _cmd_calls,
     "scan": _cmd_scan,
     "watchlist": _cmd_watchlist,
     "detect": _cmd_detect,

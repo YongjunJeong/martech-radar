@@ -47,8 +47,8 @@ def test_csp_is_read_as_a_vendor_allowlist():
 
 
 def test_personal_data_is_scrubbed_from_console_text():
-    text = ev.redact("user person@example.com phone +82 10-1234-5678 id 987654321098")
-    assert "person@example.com" not in text
+    text = ev.redact("user a@b.com phone +82 10-1234-5678 id 987654321098")
+    assert "a@b.com" not in text
     assert "{email}" in text
     assert "{num}" in text
 
@@ -123,7 +123,7 @@ def test_storage_key_names_lose_their_per_visitor_blobs():
     # Braze keys its storage by a device UUID. The name is a name, but the
     # random half is an identifier and helps no fingerprint.
     assert ev.normalise_storage_name(
-        "ab.storage.deviceId.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        "ab.storage.deviceId.b9a58994-a795-4f4d-b145-1023fd6a1e11"
     ) == "ab.storage.deviceId.{uuid}"
     assert ev.normalise_storage_name("_hjSessionUser_1234567890") == "_hjSessionUser_{num}"
 
@@ -142,7 +142,7 @@ def test_a_query_string_inside_a_storage_key_is_dropped():
 
 
 def test_normalising_storage_names_dedupes():
-    names = ["ab.storage.deviceId.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    names = ["ab.storage.deviceId.b9a58994-a795-4f4d-b145-1023fd6a1e11",
              "ab.storage.deviceId.11111111-2222-3333-4444-555555555555"]
     assert ev.normalise_storage_names(names) == ["ab.storage.deviceId.{uuid}"]
 
@@ -158,8 +158,21 @@ def test_partner_slugs_are_extracted_as_identifiers():
     from radar.evidence import extract_identifiers
     found = extract_identifiers(
         "https://acme.api.useinsider.com/x __INSIDER_SCRIPT_VERSION_acme__ "
-        "https://samplemarket-evt.rmp-api.moloco.com/e")
+        "https://lotteon-evt.rmp-api.moloco.com/e")
     pairs = {(f["kind"], f["value"]) for f in found}
     assert ("insider_partner", "acme") in pairs
-    assert ("moloco_advertiser", "samplemarket") in pairs
+    assert ("moloco_advertiser", "lotteon") in pairs
     assert len([f for f in found if f["kind"] == "insider_partner"]) == 1  # deduped
+
+
+def test_placeholders_cannot_become_vendor_observations_even_with_tags():
+    rich = {'requests': 100, 'scripts': 30, 'identifiers': 4}
+    assert ev.detect_thin(rich, '대한민국 No.1 카페24 호스팅') == 'hosting default page'
+    assert ev.detect_thin(rich, '네이버TV 서비스 종료 안내') == 'service closure notice'
+    assert ev.detect_thin(rich, '카페24 호스팅 상품 안내') is None
+    assert ev.detect_thin(rich, '서비스 종료 안내에 관한 뉴스 | 경제신문') is None
+
+
+def test_200_status_bot_walls_are_not_observations():
+    assert ev.detect_block(200, 'Request Rejected', 'The requested URL was rejected.')
+    assert ev.detect_block(200, '', '접속하신 사이트를 임시 보호 중에 있습니다.')

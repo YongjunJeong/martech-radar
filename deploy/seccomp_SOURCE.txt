@@ -1,0 +1,4 @@
+https://raw.githubusercontent.com/microsoft/playwright/v1.62.0/utils/docker/seccomp_profile.json
+SHA256 cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849
+Upstream: Microsoft Playwright, Apache-2.0. Derived profile: allow chroot in the user-namespace rule so Chromium can sandbox itself with cap_drop=ALL. All other rules unchanged.
+Derived SHA256 d88bfae71471e78dbc34e4d51830316e9abccec9b1114c969d63201bdbafad10

@@ -1,7 +1,7 @@
 """Verdict rules.
 
 The commercially dangerous mistake is not missing a vendor — it is
-promoting weak evidence to DETECTED, because change detection reads a DETECTED that
+promoting weak evidence to DETECTED, because Phase 4 reads a DETECTED that
 later disappears as a churn event and puts it in front of a rep. So most of
 these tests assert that something is *not* DETECTED.
 """
@@ -9,6 +9,8 @@ these tests assert that something is *not* DETECTED.
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,8 @@ from radar import detector as det
 from radar import evidence as ev
 from radar import registry as reg
 from radar.collector import Collector, ScanConfig
+
+SCANS = Path(__file__).parent.parent / "data" / "scans"
 
 
 @pytest.fixture(scope="module")
@@ -169,3 +173,30 @@ def test_csp_header_surfaces_vendors_the_visit_never_contacts(site):
     for vendor in ("insider", "braze", "google_tag_manager"):
         assert hits[vendor]["verdict"] == det.VERDICT_PROBABLE, vendor
         assert hits[vendor]["indirect_only"] is True, vendor
+
+
+# --- golden cases against real sites (only when scans are on disk) ----------
+# Populate `data/scans/` with your own `radar scan -o` output and list the
+# (host, fingerprint, verdict) triples you have verified by hand. The list
+# ships empty so the suite makes no claim about any particular company.
+
+GOLDEN: list[tuple[str, str, str]] = []
+
+
+@pytest.mark.parametrize("host,vendor,expected", GOLDEN)
+def test_golden_regressions(registry, host, vendor, expected):
+    path = SCANS / f"{host}.json"
+    if not path.exists():
+        pytest.skip(f"{path} not collected on this machine")
+    assert verdict(json.loads(path.read_text()), registry, vendor) == expected
+
+
+def test_blocked_site_yields_no_verdicts(registry):
+    blocked = sorted(SCANS.glob("*.json")) if SCANS.exists() else []
+    blocked = [p for p in blocked
+               if json.loads(p.read_text()).get("scan", {}).get("status") == ev.STATUS_BLOCKED]
+    if not blocked:
+        pytest.skip("no BLOCKED scan on disk to check against")
+    path = blocked[0]
+    report = det.detect(json.loads(path.read_text()), registry)
+    assert report["judged"] is False

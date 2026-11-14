@@ -27,6 +27,42 @@ def test_a_missing_file_is_fine_and_means_neutral_defaults(tmp_path):
     assert settings.scan.timezone == "UTC"
     assert settings.ui.language == "en"
     assert settings.source is None
+    assert settings.scan.minimum_observation_ms_by_host == {}
+    assert settings.scan.readiness_window_key_by_host == {}
+
+
+@pytest.mark.parametrize('value', ['-1', '60001', 'true', '"35000"'])
+def test_invalid_host_observation_budget(tmp_path, value):
+    with pytest.raises(cfg.ConfigError, match='minimum_observation'):
+        cfg.load(write(tmp_path, '[scan.minimum_observation_ms_by_host]\n"www.example.com" = ' + value))
+
+
+@pytest.mark.parametrize('host', ['https://example.com', '*.example.com', 'Example.com', 'example.com/path'])
+def test_observation_hosts_are_exact_not_urls_or_patterns(tmp_path, host):
+    with pytest.raises(cfg.ConfigError, match='minimum_observation'):
+        cfg.load(write(tmp_path, f'[scan.minimum_observation_ms_by_host]\n"{host}" = 35000'))
+
+
+def test_host_observation_budget_is_loaded(tmp_path):
+    settings = cfg.load(write(tmp_path, '[scan.minimum_observation_ms_by_host]\n"www.example.com" = 35000'))
+    assert settings.scan.minimum_observation_ms_by_host == {'www.example.com': 35000}
+
+
+@pytest.mark.parametrize('value', ['true', '100', '""', '"foo.bar"', '"fn()"', '"0invalid"'])
+def test_invalid_readiness_checkpoint(tmp_path, value):
+    with pytest.raises(cfg.ConfigError, match='readiness_window_key'):
+        cfg.load(write(tmp_path, '[scan.readiness_window_key_by_host]\n"www.example.com" = ' + value))
+
+
+@pytest.mark.parametrize('host', ['https://example.com', '*.example.com', 'Example.com', 'example.com/path'])
+def test_readiness_hosts_are_exact(tmp_path, host):
+    with pytest.raises(cfg.ConfigError, match='readiness_window_key'):
+        cfg.load(write(tmp_path, f'[scan.readiness_window_key_by_host]\n"{host}" = "storeReady"'))
+
+
+def test_readiness_checkpoint_is_loaded(tmp_path):
+    settings = cfg.load(write(tmp_path, '[scan.readiness_window_key_by_host]\n"www.example.com" = "storeReady"'))
+    assert settings.scan.readiness_window_key_by_host == {'www.example.com': 'storeReady'}
 
 
 def test_the_shipped_config_loads():

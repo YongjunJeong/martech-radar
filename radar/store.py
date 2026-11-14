@@ -18,6 +18,9 @@ from __future__ import annotations
 import gzip
 import json
 import sqlite3
+from urllib.parse import urlsplit
+from urllib.robotparser import RobotFileParser
+from . import config as cfg
 from contextlib import contextmanager
 from datetime import datetime, timedelta, UTC
 
@@ -27,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Iterator
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -124,6 +127,31 @@ CREATE TABLE IF NOT EXISTS company_summary (
     computed_at   TEXT NOT NULL
 );
 
+-- Optional, regenerable extension of company_summary. Keep schema v12
+-- readable by running older workers during a rolling deployment. Its format
+-- is governed by signals.SUMMARY_VERSION, together with the parent summary.
+CREATE TABLE IF NOT EXISTS company_observation_summary (
+    target_id TEXT PRIMARY KEY REFERENCES company_summary(target_id) ON DELETE CASCADE,
+    payload_json TEXT NOT NULL
+);
+
+-- Regenerable, relational projection for filtering before rendering cards.
+CREATE TABLE IF NOT EXISTS company_filter_summary (
+    target_id TEXT PRIMARY KEY REFERENCES company_summary(target_id) ON DELETE CASCADE,
+    observed_runs INTEGER NOT NULL,
+    good_runs INTEGER NOT NULL,
+    site_shift INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS company_solution_summary (
+    target_id TEXT NOT NULL REFERENCES company_summary(target_id) ON DELETE CASCADE,
+    fingerprint_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    state TEXT NOT NULL,
+    run_streak INTEGER NOT NULL,
+    fluctuating INTEGER NOT NULL,
+    PRIMARY KEY (target_id, fingerprint_id)
+);
+
 -- One row per signal ever pushed to the webhook. The key is the signal's
 -- stable identity; its presence here is what makes notifications once-only.
 CREATE TABLE IF NOT EXISTS notification (
@@ -178,6 +206,17 @@ CREATE TABLE IF NOT EXISTS task (
     error        TEXT
 );
 
+-- Immutable pre-queue intent: a capped queue is not proof of full coverage.
+CREATE TABLE IF NOT EXISTS collection_plan (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    note TEXT,
+    cadence_json TEXT NOT NULL,
+    items_json TEXT NOT NULL,
+    run_id INTEGER REFERENCES run(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS collection_plan_by_note ON collection_plan(note);
+
 CREATE INDEX IF NOT EXISTS task_by_state ON task(state, id);
 CREATE INDEX IF NOT EXISTS job_by_state ON job(state, id);
 CREATE INDEX IF NOT EXISTS job_by_run   ON job(run_id);
@@ -185,6 +224,32 @@ CREATE INDEX IF NOT EXISTS scan_by_target  ON scan(target_id, started_at);
 CREATE INDEX IF NOT EXISTS scan_by_run     ON scan(run_id);
 CREATE INDEX IF NOT EXISTS detection_by_fp ON detection(fingerprint_id, verdict);
 CREATE INDEX IF NOT EXISTS detection_by_scan ON detection(scan_id);
+"""
+
+# Revisions and dirty targets are updated transactionally, including direct
+# SQL regrading/redetection. Heartbeats and queue changes do not invalidate data.
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS summary_dirty (target_id TEXT PRIMARY KEY);
+INSERT OR IGNORE INTO meta(key,value) VALUES ('data_revision','0');
+CREATE INDEX IF NOT EXISTS scan_started ON scan(started_at);
+CREATE INDEX IF NOT EXISTS scan_target_url_time ON scan(target_id,url,started_at DESC,id DESC);
+CREATE TABLE IF NOT EXISTS origin_cooldown (origin TEXT PRIMARY KEY, ready_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_schedule (
+    target_id TEXT NOT NULL, url TEXT NOT NULL, next_due TEXT NOT NULL,
+    last_attempt TEXT, PRIMARY KEY(target_id,url)
+);
+"""
+for _table in ("scan", "detection"):
+    for _event in ("INSERT", "UPDATE", "DELETE"):
+        _ref = "OLD" if _event == "DELETE" else "NEW"
+        _target = (f"{_ref}.target_id" if _table == "scan" else
+                   f"(SELECT target_id FROM scan WHERE id={_ref}.scan_id)")
+        SCHEMA += f"""
+CREATE TRIGGER IF NOT EXISTS revision_{_table}_{_event.lower()}
+AFTER {_event} ON {_table} BEGIN
+    UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='data_revision';
+    INSERT OR IGNORE INTO summary_dirty(target_id) SELECT {_target} WHERE {_target} IS NOT NULL;
+END;
 """
 
 
@@ -211,8 +276,13 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _compress_evidence(stored: dict) -> bytes:
+    return gzip.compress(json.dumps(stored, ensure_ascii=False).encode('utf-8'), compresslevel=6)
+
+
 class Store:
     def __init__(self, path: Path | str | None = None):
+        self._transaction_depth = 0
         self.path = Path(path) if path else default_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -237,7 +307,7 @@ class Store:
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
-            self.conn.commit()
+            self._commit()
         else:
             self._upgrade(int(row["value"]))
 
@@ -272,7 +342,31 @@ class Store:
                 self.conn.execute("ALTER TABLE company_summary ADD COLUMN site_json TEXT")
         self.conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
                           (str(SCHEMA_VERSION),))
-        self.conn.commit()
+        self._commit()
+
+    def _commit(self):
+        if not self._transaction_depth:
+            self.conn.commit()
+
+    @contextmanager
+    def transaction(self):
+        """Publish a scan, detections and job completion together."""
+        if self._transaction_depth:
+            raise StoreError("nested transaction is not supported")
+        self.conn.execute("BEGIN IMMEDIATE")
+        self._transaction_depth = 1
+        try:
+            yield
+            self.conn.commit()
+        except BaseException:
+            self.conn.rollback()
+            raise
+        finally:
+            self._transaction_depth = 0
+
+    @staticmethod
+    def job_origin(url):
+        return urlsplit(url.removeprefix("mobile:")).netloc.lower().removeprefix("www.")
 
     def close(self) -> None:
         self.conn.close()
@@ -283,22 +377,10 @@ class Store:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    # The tables fall into three layers, in the medallion sense, and the
-    # split is the load-bearing design decision of the whole tool:
-    #
-    #   Bronze  scan.evidence_gz        raw, vendor-blind, never rewritten
-    #           (only ever re-graded in status, and re-normalised for privacy)
-    #   Silver  detection               derived from Bronze + fingerprints;
-    #           thrown away and rebuilt wholesale by `redetect`
-    #   Gold    stack_of / coverage /   computed from Silver; the sweeps are
-    #           vendor_counts / signals  materialised in company_summary,
-    #           keyed by `meta.summary_state` = a digest of the data they
-    #           were computed from, and rebuilt whenever the key mismatches
-    #           — so the copy exists but a stale copy cannot be *served*.
-    #
-    # Bronze plus the fingerprint files are the only truth. Everything above
-    # is a cache of a function of them. Keep it that way: a second copy of a
-    # fact is a second place for it to be wrong.
+    # One SQLite database: evidence preserves what the browser saw; detection
+    # stores the current fingerprint verdicts; company_summary and its small
+    # extensions cache UI calculations. Derived rows can be rebuilt. Keep
+    # status regrading and privacy cleanup consistent with the evidence blob.
 
     # -- targets (watchlist; not a data layer) ---------------------------------
 
@@ -344,7 +426,7 @@ class Store:
                     self.conn.execute("UPDATE target SET enabled = 0, last_seen = ? "
                                       "WHERE id = ?", (now, row["id"]))
                     stats["disabled"] += 1
-        self.conn.commit()
+        self._commit()
         return stats
 
     def upsert_target(self, *, id: str, company: str, industry: str,
@@ -374,12 +456,12 @@ class Store:
              robots_policy, robots_note, now, now),
         )
         if _now is None:
-            self.conn.commit()
+            self._commit()
 
     def set_target_enabled(self, target_id: str, enabled: bool) -> bool:
         cur = self.conn.execute("UPDATE target SET enabled = ?, last_seen = ? WHERE id = ?",
                                 (int(enabled), _now(), target_id))
-        self.conn.commit()
+        self._commit()
         return cur.rowcount > 0
 
     def industries(self) -> list[sqlite3.Row]:
@@ -397,7 +479,7 @@ class Store:
             "ON CONFLICT(code) DO UPDATE SET label=excluded.label, "
             "label_en=excluded.label_en, position=excluded.position",
             (code, label, label_en, position))
-        self.conn.commit()
+        self._commit()
 
     def targets(self, enabled_only: bool = False) -> list[sqlite3.Row]:
         clause = "WHERE enabled = 1" if enabled_only else ""
@@ -423,7 +505,7 @@ class Store:
             "INSERT INTO run (started_at, target_count, note) VALUES (?,?,?)",
             (_now(), target_count, note),
         )
-        self.conn.commit()
+        self._commit()
         return int(cur.lastrowid)
 
     def finish_run(self, run_id: int, **fields: Any) -> None:
@@ -437,7 +519,7 @@ class Store:
         assignments = ", ".join(f"{k}=?" for k in fields)
         sql = "UPDATE run SET finished_at=?" + (f", {assignments}" if fields else "") + " WHERE id=?"
         self.conn.execute(sql, (_now(), *fields.values(), run_id))
-        self.conn.commit()
+        self._commit()
 
     def runs(self, limit: int = 20) -> list[sqlite3.Row]:
         return list(self.conn.execute(
@@ -477,7 +559,7 @@ class Store:
             "ON CONFLICT(origin) DO UPDATE SET body=excluded.body, "
             "note=excluded.note, fetched_at=excluded.fetched_at",
             (origin, body, note, _now()))
-        self.conn.commit()
+        self._commit()
 
     # -- jobs ------------------------------------------------------------------
 
@@ -491,7 +573,14 @@ class Store:
     JOB_DONE = "done"
     JOB_FAILED = "failed"
 
-    def queue_run(self, jobs, note: str | None = None) -> int:
+    def save_collection_plan(self, audit, note=None):
+        cursor = self.conn.execute(
+            'INSERT INTO collection_plan(created_at,note,cadence_json,items_json) VALUES (?,?,?,?)',
+            (audit['created_at'], note, json.dumps(audit['cadence']), json.dumps(audit['items'])))
+        self._commit()
+        return cursor.lastrowid
+
+    def queue_run(self, jobs, note: str | None = None, *, plan_id=None) -> int:
         """Create a run and put its work in the queue.
 
         Queueing rather than scanning inline is what lets the collector live
@@ -500,25 +589,54 @@ class Store:
         far more sites turn away.
         """
         now = _now()
-        run_id = self.start_run(target_count=len({j.target_id for j in jobs}), note=note)
-        self.conn.executemany(
-            "INSERT INTO job (run_id, target_id, url, created_at) VALUES (?,?,?,?)",
-            [(run_id, job.target_id, job.url, now) for job in jobs])
-        self.conn.commit()
+        with self.transaction():
+            active = {(r["target_id"], r["url"]) for r in self.conn.execute(
+                "SELECT target_id,url FROM job WHERE state IN ('pending','claimed')")}
+            selected = []
+            for job in jobs:
+                key = (job.target_id, job.url)
+                if key not in active:
+                    selected.append(job)
+                    active.add(key)
+            run_id = self.start_run(target_count=len({j.target_id for j in selected}), note=note)
+            if plan_id is not None:
+                self.conn.execute('UPDATE collection_plan SET run_id=? WHERE id=?', (run_id, plan_id))
+            self.conn.executemany(
+                "INSERT INTO job (run_id, target_id, url, created_at) VALUES (?,?,?,?)",
+                [(run_id, job.target_id, job.url, now) for job in selected])
+            if not selected:
+                self.finish_run(run_id)
         return run_id
 
     def claim_job(self, worker: str, run_id: int | None = None) -> sqlite3.Row | None:
         """Take the next job, atomically. Returns None when the queue is dry."""
         self._release_stale_claims()
+        # A target can be paused after jobs were queued. Close those jobs without
+        # visiting it, so drained runs still finish and history stays intact.
+        self.conn.execute(
+            "UPDATE job SET state='failed', finished_at=?, error='target disabled' "
+            "WHERE state='pending' AND target_id IN "
+            "(SELECT id FROM target WHERE enabled=0)", (_now(),))
+        settings = cfg.load().scan
+        active = list(self.conn.execute("SELECT url FROM job WHERE state='claimed'"))
+        if len(active) >= max(1, settings.concurrency):
+            self._commit()
+            return None
+        occupied = {self.job_origin(r["url"]) for r in active}
+        cooldowns = {r["origin"] for r in self.conn.execute(
+            "SELECT origin FROM origin_cooldown WHERE ready_at > ?", (_now(),))}
         clause = "AND run_id = ?" if run_id is not None else ""
-        params: tuple = (self.JOB_CLAIMED, worker, _now())
-        params += (run_id,) if run_id is not None else ()
-        row = self.conn.execute(
-            "UPDATE job SET state = ?, claimed_by = ?, claimed_at = ? "
-            "WHERE id = (SELECT id FROM job WHERE state = 'pending' "
-            f"           {clause} ORDER BY id LIMIT 1) "
-            "RETURNING *", params).fetchone()
-        self.conn.commit()
+        pending = self.conn.execute(
+            f"SELECT id,url FROM job WHERE state='pending' {clause} ORDER BY id",
+            (run_id,) if run_id is not None else ())
+        selected = next((r for r in pending
+                         if self.job_origin(r["url"]) not in occupied | cooldowns), None)
+        row = None
+        if selected:
+            row = self.conn.execute(
+                "UPDATE job SET state=?,claimed_by=?,claimed_at=? WHERE id=? RETURNING *",
+                (self.JOB_CLAIMED, worker, _now(), selected["id"])).fetchone()
+        self._commit()
         if row is None:
             return None
         # The worker needs the company's robots policy with the job, not a
@@ -528,6 +646,12 @@ class Store:
         job["robots_policy"] = target["robots_policy"] if target else "respect"
         return job
 
+    def has_unfinished_jobs(self, run_id=None):
+        clause = "AND run_id=?" if run_id is not None else ""
+        return self.conn.execute(
+            f"SELECT 1 FROM job WHERE state IN ('pending','claimed') {clause} LIMIT 1",
+            (run_id,) if run_id is not None else ()).fetchone() is not None
+
     def _release_stale_claims(self) -> int:
         cutoff = (datetime.now(UTC)
                   - timedelta(seconds=self.CLAIM_TIMEOUT_SECONDS)).isoformat()
@@ -536,17 +660,37 @@ class Store:
             "WHERE state = 'claimed' AND claimed_at < ?", (cutoff,))
         return cur.rowcount
 
+    def _cooldown_job(self, job_id):
+        row = self.conn.execute("SELECT url,target_id FROM job WHERE id=?", (job_id,)).fetchone()
+        if row:
+            origin = self.job_origin(row["url"])
+            settings = cfg.load().scan
+            delay = settings.per_site_delay_ms / 1000
+            parts = urlsplit(row["url"].removeprefix("mobile:"))
+            robots = self.conn.execute("SELECT body FROM robots WHERE origin=?",
+                                       (f"{parts.scheme}://{parts.netloc}",)).fetchone()
+            target = self.target(row["target_id"])
+            if settings.respect_robots and target and target["robots_policy"] != "override" and robots and robots["body"]:
+                parser = RobotFileParser()
+                parser.parse(robots["body"].splitlines())
+                delay = max(delay, parser.crawl_delay(settings.robots_user_agent) or 0)
+            ready = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
+            self.conn.execute("INSERT INTO origin_cooldown(origin,ready_at) VALUES (?,?) "
+                              "ON CONFLICT(origin) DO UPDATE SET ready_at=excluded.ready_at", (origin, ready))
+
     def finish_job(self, job_id: int, scan_id: int) -> None:
+        self._cooldown_job(job_id)
         self.conn.execute(
             "UPDATE job SET state = ?, finished_at = ?, scan_id = ? WHERE id = ?",
             (self.JOB_DONE, _now(), scan_id, job_id))
-        self.conn.commit()
+        self._commit()
 
     def fail_job(self, job_id: int, error: str) -> None:
+        self._cooldown_job(job_id)
         self.conn.execute(
             "UPDATE job SET state = ?, finished_at = ?, error = ? WHERE id = ?",
             (self.JOB_FAILED, _now(), error[:500], job_id))
-        self.conn.commit()
+        self._commit()
 
     # -- tasks -----------------------------------------------------------------
     #
@@ -569,7 +713,7 @@ class Store:
             "INSERT INTO task (kind, params_json, requested_by, requested_at) "
             "VALUES (?,?,?,?)",
             (kind, json.dumps(params or {}, ensure_ascii=False), requested_by, _now()))
-        self.conn.commit()
+        self._commit()
         return int(cur.lastrowid)
 
     def claim_task(self, worker: str) -> dict[str, Any] | None:
@@ -583,7 +727,7 @@ class Store:
             "UPDATE task SET state = ?, claimed_by = ?, started_at = ? "
             "WHERE id = (SELECT id FROM task WHERE state = 'pending' ORDER BY id LIMIT 1) "
             "RETURNING *", (self.TASK_RUNNING, worker, _now())).fetchone()
-        self.conn.commit()
+        self._commit()
         if row is None:
             return None
         task = dict(row)
@@ -594,14 +738,14 @@ class Store:
         self.conn.execute(
             "UPDATE task SET state = ?, finished_at = ?, output = ? WHERE id = ?",
             (self.TASK_DONE, _now(), output[-self.TASK_OUTPUT_LIMIT:], task_id))
-        self.conn.commit()
+        self._commit()
 
     def fail_task(self, task_id: int, error: str, output: str = "") -> None:
         self.conn.execute(
             "UPDATE task SET state = ?, finished_at = ?, error = ?, output = ? WHERE id = ?",
             (self.TASK_FAILED, _now(), error[:500],
              output[-self.TASK_OUTPUT_LIMIT:] or None, task_id))
-        self.conn.commit()
+        self._commit()
 
     def task(self, task_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM task WHERE id = ?", (task_id,)).fetchone()
@@ -627,7 +771,7 @@ class Store:
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
-        self.conn.commit()
+        self._commit()
 
     def run_progress(self, run_id: int) -> dict[str, Any]:
         counts = {r["state"]: r["n"] for r in self.conn.execute(
@@ -678,15 +822,12 @@ class Store:
         scan = result.get("scan", {})
         blob = None
         if keep_evidence:
-            payload = json.dumps(
+            blob = _compress_evidence(
                 {"schema_version": result.get("schema_version"),
                  "scan": scan,
                  "evidence": result.get("evidence", {}),
                  "counts": result.get("counts", {}),
-                 "warnings": result.get("warnings", [])},
-                ensure_ascii=False,
-            ).encode("utf-8")
-            blob = gzip.compress(payload, compresslevel=6)
+                 "warnings": result.get("warnings", [])})
 
         cur = self.conn.execute(
             "INSERT INTO scan (run_id, target_id, url, final_url, page_host, status, "
@@ -702,7 +843,7 @@ class Store:
                 blob,
             ),
         )
-        self.conn.commit()
+        self._commit()
         return int(cur.lastrowid)
 
     #: A scan is treated as partial when it collected less than this share
@@ -718,7 +859,9 @@ class Store:
         Called after detection, because both halves matter: a page that
         fetched less but found the same vendors is fine, and only a drop in
         both is evidence that we saw part of a page rather than a changed
-        one. Partial page loads must not manufacture vendor removals.
+        one. Left alone this is the shape that manufactures removals — a
+        real run collected 133 requests from a site that had given 245 to
+        251 on six previous visits, and two vendors duly went missing.
         """
         row = self.conn.execute(
             "SELECT target_id, status, counts_json FROM scan WHERE id = ?",
@@ -760,10 +903,7 @@ class Store:
         # its own copy of the status and `redetect` trusts that copy. A row
         # that says PARTIAL over a blob that says OK is a removal that comes
         # back to life the next time someone re-judges the history.
-        stored = self.load_evidence(scan_id)
-        if stored is not None:
-            stored.setdefault("scan", {})["status"] = "PARTIAL"
-        self.restatus_scan(scan_id, "PARTIAL", marker, stored)
+        self.restatus_scan(scan_id, "PARTIAL", marker)
         return marker
 
     def load_evidence(self, scan_id: int) -> dict | None:
@@ -776,27 +916,28 @@ class Store:
 
     def rewrite_evidence(self, scan_id: int, stored: dict) -> None:
         """Replace a stored evidence blob in place."""
-        payload = json.dumps(stored, ensure_ascii=False).encode("utf-8")
         self.conn.execute("UPDATE scan SET evidence_gz = ? WHERE id = ?",
-                          (gzip.compress(payload, compresslevel=6), scan_id))
-        self.conn.commit()
+                          (_compress_evidence(stored), scan_id))
+        self._commit()
 
     def restatus_scan(self, scan_id: int, status: str, marker: str,
                       stored: dict | None = None) -> None:
         """Re-grade a stored scan under a newer status rule.
 
-        The evidence blob is rewritten too, so the row and the blob never
-        disagree about what this scan was.
+        The row and evidence carry the same status and reason, published in
+        one UPDATE. Callers need not load or edit a second copy themselves.
         """
-        self.conn.execute(
-            "UPDATE scan SET status = ?, block_marker = ? WHERE id = ?",
-            (status, marker, scan_id),
-        )
+        if stored is None:
+            stored = self.load_evidence(scan_id)
         if stored is not None:
-            payload = json.dumps(stored, ensure_ascii=False).encode("utf-8")
-            self.conn.execute("UPDATE scan SET evidence_gz = ? WHERE id = ?",
-                              (gzip.compress(payload, compresslevel=6), scan_id))
-        self.conn.commit()
+            stored.setdefault('scan', {}).update(status=status, block_marker=marker)
+            self.conn.execute(
+                'UPDATE scan SET status=?, block_marker=?, evidence_gz=? WHERE id=?',
+                (status, marker, _compress_evidence(stored), scan_id))
+        else:
+            self.conn.execute('UPDATE scan SET status=?, block_marker=? WHERE id=?',
+                              (status, marker, scan_id))
+        self._commit()
 
     #: Every scan column except the gzipped evidence. List views read scan
     #: rows by the thousand and never open the blob; dragging it along made
@@ -841,7 +982,7 @@ class Store:
             "matches_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
-        self.conn.commit()
+        self._commit()
         return len(rows)
 
     def detections_for(self, scan_id: int) -> list[sqlite3.Row]:
@@ -869,15 +1010,15 @@ class Store:
             grouped[row["scan_id"]].append(row)
         return grouped
 
-    def latest_scans_by_target(self, trustworthy_only: bool = True
+    def latest_scans_by_target(self, trustworthy_only: bool = True, target_ids=None
                                ) -> dict[str, list[sqlite3.Row]]:
         """latest_scans(), grouped by target — one table read for all targets."""
         grouped: dict[str, list[sqlite3.Row]] = {}
-        for row in self.latest_scans(trustworthy_only):
+        for row in self.latest_scans(trustworthy_only, target_ids):
             grouped.setdefault(row["target_id"], []).append(row)
         return grouped
 
-    def stacks_of(self, verdicts: tuple[str, ...] = ("DETECTED",)
+    def stacks_of(self, verdicts: tuple[str, ...] = ("DETECTED",), target_ids=None
                   ) -> dict[str, list[dict[str, Any]]]:
         """Every company's current stack in two queries total.
 
@@ -886,7 +1027,7 @@ class Store:
         company and the detection table once per scan. This is the same
         merge, batched.
         """
-        by_target = self.latest_scans_by_target()
+        by_target = self.latest_scans_by_target(target_ids=target_ids)
         detections = self.detections_by_scan(
             s["id"] for scans in by_target.values() for s in scans)
         return {
@@ -910,25 +1051,25 @@ class Store:
                     best[row["fingerprint_id"]] = row
         return sorted(best.values(), key=lambda r: (r["category"], -r["score"], r["name"]))
 
-    def latest_scans(self, trustworthy_only: bool = True) -> list[sqlite3.Row]:
-        """The most recent scan of each (target, url).
-
-        Grouping by url as well as target is what makes extra URLs worth
-        listing: a vendor that only loads on a product page still counts
-        toward the company's stack.
-
-        With `trustworthy_only`, a target whose last visit was blocked falls
-        back to its last good visit instead of looking like an empty stack.
-        """
-        clause = f"WHERE {_trusted_sql()}" if trustworthy_only else ""
-        rows = self.conn.execute(
-            f"SELECT {self._SCAN_META} FROM scan {clause} "
-            f"ORDER BY started_at DESC, id DESC"
-        )
-        latest: dict[tuple[str, str], sqlite3.Row] = {}
-        for row in rows:
-            latest.setdefault((row["target_id"], row["url"]), row)
-        return list(latest.values())
+    def latest_scans(self, trustworthy_only: bool = True, target_ids=None) -> list[sqlite3.Row]:
+        """Select one latest scan per target/URL in SQL; never return all history."""
+        where = [_trusted_sql()] if trustworthy_only else []
+        params = []
+        if target_ids is not None:
+            params = list(target_ids)
+            if not params:
+                return []
+            where.append("target_id IN (" + ",".join("?" for _ in params) + ")")
+        cutoff = cfg.load().analysis.cutoff
+        if cutoff:
+            where.append("julianday(started_at) >= julianday(?)")
+            params.append(cutoff)
+        clause = "WHERE " + " AND ".join(where) if where else ""
+        return list(self.conn.execute(
+            f"SELECT {self._SCAN_META} FROM scan WHERE id IN ("
+            "SELECT id FROM (SELECT id, ROW_NUMBER() OVER ("
+            "PARTITION BY target_id,url ORDER BY started_at DESC,id DESC) AS rn "
+            f"FROM scan {clause}) WHERE rn=1) ORDER BY started_at DESC,id DESC", params))
 
     def stack_of(self, target_id: str,
                  verdicts: tuple[str, ...] = ("DETECTED",)) -> list[dict[str, Any]]:
@@ -937,11 +1078,11 @@ class Store:
         When two URLs disagree, the stronger verdict wins — a vendor present
         on the product page but not the home page is present.
         """
-        scans = self.latest_scans_by_target().get(target_id, [])
+        scans = self.latest_scans_by_target(target_ids=[target_id]).get(target_id, [])
         detections = self.detections_by_scan(s["id"] for s in scans)
         return self._merge_stack(scans, detections, verdicts)
 
-    def coverage(self, target_id: str | None = None) -> dict[str, dict[str, Any]]:
+    def coverage(self, target_id: str | None = None, *, target_ids=None) -> dict[str, dict[str, Any]]:
         """Whether each target has ever been judged, and how it last went.
 
         An empty stack means two very different things: "we looked and the
@@ -950,11 +1091,18 @@ class Store:
         difference is answered here rather than inferred from an empty list.
         """
         report: dict[str, dict[str, Any]] = {}
-        clause = "WHERE target_id = ? " if target_id else ""
+        ids = [target_id] if target_id else (list(target_ids) if target_ids is not None else None)
+        if ids == []:
+            return {}
+        where = ["target_id IN (" + ",".join("?" for _ in ids) + ")"] if ids else []
+        params = list(ids or ())
+        if cutoff := cfg.load().analysis.cutoff:
+            where.append("julianday(started_at) >= julianday(?)")
+            params.append(cutoff)
+        clause = "WHERE " + " AND ".join(where) + " " if where else ""
         rows = self.conn.execute(
             f"SELECT target_id, status, started_at, url FROM scan "
-            f"{clause}ORDER BY started_at DESC, id DESC",
-            (target_id,) if target_id else (),
+            f"{clause}ORDER BY started_at DESC, id DESC", params,
         )
         for row in rows:
             entry = report.setdefault(row["target_id"], {
@@ -1006,32 +1154,22 @@ class Store:
         return dest
 
     def data_state(self) -> str:
-        """A digest of everything the summaries are a function of.
-
-        Any new scan, re-grade or redetect changes at least one term, and
-        that is the whole invalidation story: mismatch means rebuild.
-        """
-        row = self.conn.execute(
-            "SELECT (SELECT COALESCE(MAX(id), 0) FROM scan) AS scan_high, "
-            "       (SELECT COUNT(*) FROM scan) AS scans, "
-            f"      (SELECT COALESCE(SUM({_trusted_sql()}), 0) FROM scan) AS good, "
-            "       (SELECT COUNT(*) FROM detection) AS detections, "
-            "       (SELECT COALESCE(MAX(rowid), 0) FROM detection) AS detection_high"
-        ).fetchone()
-        # `good` moves when a scan is re-graded; `detection_high` moves on
-        # every redetect even when the count does not.
-        return (f"{row['scan_high']}:{row['scans']}:{row['good']}:"
-                f"{row['detections']}:{row['detection_high']}")
+        """O(1) revision updated by triggers in the data-writing transaction."""
+        return self.get_meta("data_revision") or "0"
 
     def summary_state(self) -> str | None:
         row = self.conn.execute(
             "SELECT value FROM meta WHERE key = 'summary_state'").fetchone()
         return row["value"] if row else None
 
-    def replace_summaries(self, rows: list[dict[str, Any]], state: str) -> None:
+    def replace_summaries(self, rows: list[dict[str, Any]], state: str, target_ids=None) -> None:
         """Swap in a freshly computed summary set, atomically with its key."""
         now = _now()
-        self.conn.execute("DELETE FROM company_summary")
+        if target_ids is None:
+            self.conn.execute("DELETE FROM company_summary")
+        else:
+            self.conn.executemany("DELETE FROM company_summary WHERE target_id=?",
+                                  [(t,) for t in target_ids])
         self.conn.executemany(
             "INSERT INTO company_summary (target_id, judged, scans, good_scans, "
             "last_status, last_scan_at, last_good_at, stack_json, changes_json, "
@@ -1042,33 +1180,46 @@ class Store:
               r.get("site_json"), now)
              for r in rows],
         )
+        self.conn.executemany(
+            "INSERT INTO company_observation_summary (target_id, payload_json) VALUES (?,?)",
+            [(r["target_id"], r.get("observations_json", "{}")) for r in rows],
+        )
+        self.conn.executemany(
+            "INSERT INTO company_filter_summary VALUES (?,?,?,?)",
+            [(r['target_id'], *r.get('filter_facts', (0, 0, 0))) for r in rows])
+        self.conn.executemany(
+            "INSERT INTO company_solution_summary VALUES (?,?,?,?,?,?)",
+            [(r['target_id'], *fact) for r in rows for fact in r.get('solution_facts', [])])
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('summary_state', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (state,))
-        self.conn.commit()
+        self._commit()
 
-    def summary_rows(self) -> list[sqlite3.Row]:
-        return list(self.conn.execute("SELECT * FROM company_summary"))
+    def summary_rows(self, target_ids=None) -> list[sqlite3.Row]:
+        ids = tuple(target_ids) if target_ids is not None else None
+        where = '' if ids is None else ' WHERE s.target_id IN (' + ','.join('?' for _ in ids) + ')'
+        return list(self.conn.execute(
+            "SELECT s.*, o.payload_json AS observations_json FROM company_summary s "
+            "LEFT JOIN company_observation_summary o ON o.target_id=s.target_id" + where, ids or ()))
 
+
+    def identifiers_many(self, target_ids) -> dict[str, list[dict[str, Any]]]:
+        """Read each target's latest evidence once per request."""
+        result = {}
+        for target_id, scans in self.latest_scans_by_target(target_ids=set(target_ids)).items():
+            found = {}
+            for scan in scans:
+                stored = self.load_evidence(scan["id"])
+                for ident in ((stored or {}).get("evidence") or {}).get("identifiers") or []:
+                    key = (ident.get("kind", ""), ident.get("value", ""))
+                    if key[1] and key not in found:
+                        found[key] = {"kind": key[0], "value": key[1], "seen_on": scan["url"]}
+            result[target_id] = sorted(found.values(), key=lambda r: (r["kind"], r["value"]))
+        return result
 
     def identifiers_of(self, target_id: str) -> list[dict[str, Any]]:
-        """Vendor account IDs seen on this company's latest good scans.
+        return self.identifiers_many([target_id]).get(target_id, [])
 
-        The collector already extracts them (GTM containers, GA4 streams,
-        ad-account IDs, partner slugs); this surfaces them per company —
-        which *contract* a brand runs, not merely which vendor.
-        """
-        found: dict[tuple[str, str], dict[str, Any]] = {}
-        for scan in self.latest_scans_by_target().get(target_id, []):
-            stored = self.load_evidence(scan["id"])
-            if stored is None:
-                continue
-            for ident in (stored.get("evidence") or {}).get("identifiers") or []:
-                key = (ident.get("kind", ""), ident.get("value", ""))
-                if key[1] and key not in found:
-                    found[key] = {"kind": key[0], "value": key[1],
-                                  "seen_on": scan["url"]}
-        return sorted(found.values(), key=lambda r: (r["kind"], r["value"]))
 
     # -- signal acknowledgements ----------------------------------------------
 
@@ -1080,6 +1231,13 @@ class Store:
     def set_signal_ack(self, key: str, state: str | None,
                        note: str | None = None) -> None:
         """Record a verdict; an empty state clears it (back to open)."""
+        from .signals import LEGACY_KINDS, normalize_key
+        key = normalize_key(key)
+        if state and state not in self.ACK_STATES:
+            raise ValueError(f"unknown ack state {state!r}")
+        kind, sep, rest = key.partition(":")
+        aliases = [old + sep + rest for old, new in LEGACY_KINDS.items() if new == kind]
+        self.conn.executemany("DELETE FROM signal_ack WHERE key = ?", [(k,) for k in aliases])
         if not state:
             self.conn.execute("DELETE FROM signal_ack WHERE key = ?", (key,))
         else:
@@ -1090,7 +1248,7 @@ class Store:
                 "ON CONFLICT(key) DO UPDATE SET state=excluded.state, "
                 "note=excluded.note, noted_at=excluded.noted_at",
                 (key, state, note, _now()))
-        self.conn.commit()
+        self._commit()
 
     # -- notifications --------------------------------------------------------
 
@@ -1102,7 +1260,7 @@ class Store:
             "INSERT OR IGNORE INTO notification (key, kind, target_id, sent_at) "
             "VALUES (?,?,?,?)",
             [(key, kind, target_id, sent_at) for key, kind, target_id in rows])
-        self.conn.commit()
+        self._commit()
 
 
 @contextmanager

@@ -5,7 +5,7 @@
 #
 # After that the database is the watchlist — edit it on the dashboard's
 # Manage page, or re-import a file any time. Companies are never deleted on
-# import; ones missing from the file are paused (their history stays).
+# import; missing entries stay unchanged unless --replace is explicitly requested.
 #
 #   id        a stable key; the history hangs off it, so never rename it
 #   industry  must be declared under `industries` below
@@ -27,8 +27,8 @@ targets:
     company: Example Shop
     industry: retail
     urls:
-      - https://shop.example/
-      - https://shop.example/products/1
+      - https://shop.example.com/
+      - https://shop.example.com/products/1
     # A second URL widens what the stack can show — vendors often load only
     # on product or event pages. Prefix a URL with mobile: to scan it with a
     # mobile browser profile; its history is kept separate from desktop.
@@ -39,11 +39,11 @@ targets:
     company: Example Airlines
     industry: travel
     urls:
-      - https://air.example/
+      - https://travel.example.com/
 
   - id: example_bank
     company: Example Bank
     industry: finance
     note: consent banner gates most tags — expect a thin stack
     urls:
-      - https://bank.example/
+      - https://bank.example.com/

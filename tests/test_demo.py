@@ -24,13 +24,14 @@ def test_offline_demo_and_overwrite_guard(tmp_path, monkeypatch):
         assert len(store.runs()) == 3
         found = signals.all_signals(store)
         assert any(s.kind == signals.KIND_COMPETITOR_MIGRATION for s in found)
-        assert any(s.kind == signals.KIND_GREENFIELD for s in found)
+        assert not any(s.kind == signals.KIND_GREENFIELD for s in found)
         assert not any(s.target_id == "walled" or s.kind in signals.HOME_KINDS for s in found)
     client = TestClient(create_app(str(database)))
     for path in ("/", "/signals", "/companies/shop_b"):
         response = client.get(path)
         assert response.status_code == 200
-        assert "[DEMO]" in response.text
+        if path == "/companies/shop_b":
+            assert "[DEMO]" in response.text
     before = database.read_bytes()
     with pytest.raises(FileExistsError):
         seed(home)

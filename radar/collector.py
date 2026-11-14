@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
 from functools import lru_cache
 from dataclasses import dataclass, asdict, field
@@ -31,9 +32,34 @@ def _settings() -> _config.Config:
     """Read radar.toml once per process."""
     return _config.load()
 
-COLLECTOR_VERSION = "0.2.0"
+COLLECTOR_VERSION = "0.2.8"
+
+
+class _ObservationTimeout(Exception):
+    """An incomplete page must not monopolise a worker or establish absence."""
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
+
+
+@contextlib.contextmanager
+def _stage(timings, name):
+    """Per-visit wall time, including cancelled stages; no URLs or page contents."""
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        timings[name] = round(timings.get(name, 0) + (time.monotonic() - started) * 1000, 2)
 
 _PROBE_JS = (Path(__file__).parent / "probe.js").read_text(encoding="utf-8")
+
+_READINESS_JS = '''key => {
+    let present = false;
+    try { present = Object.prototype.hasOwnProperty.call(window, key)
+        && window[key] != null; } catch (_) {}
+    return {ready: document.readyState, present};
+}'''
 
 # Android Chrome, for `mobile:`-prefixed URLs — Korean commerce sites
 # routinely serve a different tag stack to mobile visitors on the same URL.
@@ -73,8 +99,22 @@ class ScanConfig:
     #: Scroll and move the mouse to wake up lazily-loaded tags.
     interact: bool = True
     interaction_ms: int = 3_000
+    #: Mouse/scroll commands can also block in a renderer showing dialogs.
+    interaction_timeout_ms: int = 10_000
     #: Absolute ceiling for one scan. One bad site must never hang the batch.
     hard_timeout_ms: int = 90_000
+    #: Bound renderer calls even when its JS or an awaited browser API stalls.
+    probe_timeout_ms: int = 5_000
+    #: Total ordinary settling budget, including repeated document changes.
+    settle_timeout_ms: int = 20_000
+    minimum_observation_ms_by_host: dict[str, int] = field(
+        default_factory=lambda: dict(_settings().scan.minimum_observation_ms_by_host))
+    readiness_window_key_by_host: dict[str, str] = field(
+        default_factory=lambda: dict(_settings().scan.readiness_window_key_by_host))
+    #: A ceiling, not a mandatory wait; ready sites finish after a quiet window.
+    readiness_timeout_ms: int = 35_000
+    #: Additional ceiling for pending/active scripts on configured slow sites.
+    late_script_grace_ms: int = 10_000
     #: Read script bodies to find vendor hostnames referenced but not yet called.
     scan_js_bodies: bool = True
     max_js_bodies: int = 40
@@ -86,6 +126,9 @@ class ScanConfig:
     locale: str = field(default_factory=lambda: _settings().scan.locale)
     timezone_id: str = field(default_factory=lambda: _settings().scan.timezone)
     headless: bool = True
+    #: Use the regular Chromium lifecycle in headless mode, not headless shell.
+    browser_channel: str = "chromium"
+    chromium_sandbox: bool = field(default_factory=lambda: _settings().scan.chromium_sandbox)
     #: Honour each site's robots.txt. See `radar/robots.py`.
     respect_robots: bool = field(default_factory=lambda: _settings().scan.respect_robots)
     robots_user_agent: str = field(default_factory=lambda: _settings().scan.robots_user_agent)
@@ -121,10 +164,19 @@ class Collector:
 
     async def start(self) -> None:
         self._pw = await async_playwright().start()
-        self._browser = await self._pw.chromium.launch(
-            headless=self.config.headless,
-            args=["--disable-dev-shm-usage", "--no-sandbox"],
-        )
+        try:
+            self._browser = await self._pw.chromium.launch(
+                channel=self.config.browser_channel,
+                headless=self.config.headless,
+                chromium_sandbox=self.config.chromium_sandbox,
+                args=["--disable-dev-shm-usage"],
+            )
+        except BaseException:
+            # A sandbox failure is a deployment error, never a reason to retry
+            # without isolation. Also release the driver on failed startup.
+            await self._pw.stop()
+            self._pw = None
+            raise
         self._baseline_window_keys = await self._capture_baseline_keys()
 
     async def stop(self) -> None:
@@ -242,18 +294,23 @@ class Collector:
                     await asyncio.sleep(gap - waited)
             self._last_visit[origin] = time.monotonic()
 
-    async def scan(self, url: str) -> dict:
+    async def scan(self, url: str, *, respect_robots: bool | None = None) -> dict:
         """Scan one URL. Always returns a result dict; never raises."""
         if self._browser is None:
             raise RuntimeError("Collector.start() must be called before scan()")
         await self._ensure_browser()
         started = time.monotonic()
         started_at = datetime.now(UTC)
+        timings = {}
 
+        # Per-job policy must never mutate the shared collector configuration.
+        policy = self.config.respect_robots if respect_robots is None else respect_robots
+        scan_config = {**asdict(self.config), "respect_robots": policy}
         _, real_url = ev.split_mobile(url)
         crawl_delay: float | None = None
-        if self.config.respect_robots:
-            decision = await self._robots.check(real_url, self._fetch_text)
+        if policy:
+            with _stage(timings, "robots"):
+                decision = await self._robots.check(real_url, self._fetch_text)
             crawl_delay = decision.crawl_delay
             if not decision.allowed:
                 result = _empty_result(url)
@@ -265,18 +322,21 @@ class Collector:
                 result["scan"]["started_at"] = started_at.isoformat()
                 result["scan"]["duration_ms"] = int((time.monotonic() - started) * 1000)
                 result["scan"]["collector_version"] = COLLECTOR_VERSION
-                result["scan"]["config"] = asdict(self.config)
+                result["scan"]["config"] = scan_config
+                result["scan"]["timings_ms"] = timings
                 return result
 
-        await self._be_polite(real_url, crawl_delay)
+        with _stage(timings, "politeness"):
+            await self._be_polite(real_url, crawl_delay)
         try:
             result = await asyncio.wait_for(
-                self._scan_inner(url),
+                self._scan_inner(url, timings),
                 timeout=self.config.hard_timeout_ms / 1000,
             )
         except TimeoutError:
             result = _empty_result(url)
             result["scan"]["status"] = ev.STATUS_TIMEOUT
+            result["scan"]["stop_reason"] = "hard_timeout"
             result["warnings"].append(
                 f"hard timeout after {self.config.hard_timeout_ms}ms — no evidence collected"
             )
@@ -292,30 +352,35 @@ class Collector:
         result["scan"]["started_at"] = started_at.isoformat()
         result["scan"]["duration_ms"] = int((time.monotonic() - started) * 1000)
         result["scan"]["collector_version"] = COLLECTOR_VERSION
-        result["scan"]["config"] = asdict(self.config)
+        result["scan"]["config"] = scan_config
+        result["scan"]["timings_ms"] = timings
         return result
 
     # -- the actual session ---------------------------------------------------
 
-    async def _scan_inner(self, url: str) -> dict:
+    async def _scan_inner(self, url: str, timings: dict | None = None) -> dict:
+        timings = timings if timings is not None else {}
         cfg = self.config
         mobile, real_url = ev.split_mobile(url)
         result = _empty_result(url)      # the prefixed URL is the identity
         result["scan"]["profile"] = "mobile" if mobile else "desktop"
         warnings: list[str] = result["warnings"]
 
-        context = await self._browser.new_context(
-            user_agent=MOBILE_USER_AGENT if mobile else cfg.user_agent,
-            viewport=(dict(MOBILE_VIEWPORT) if mobile
-                      else {"width": cfg.viewport_width, "height": cfg.viewport_height}),
-            is_mobile=mobile,
-            has_touch=mobile,
-            locale=cfg.locale,
-            timezone_id=cfg.timezone_id,
-            ignore_https_errors=True,
-        )
-        page = await context.new_page()
+        with _stage(timings, "context"):
+            context = await self._browser.new_context(
+                user_agent=MOBILE_USER_AGENT if mobile else cfg.user_agent,
+                viewport=(dict(MOBILE_VIEWPORT) if mobile
+                          else {"width": cfg.viewport_width, "height": cfg.viewport_height}),
+                is_mobile=mobile,
+                has_touch=mobile,
+                locale=cfg.locale,
+                timezone_id=cfg.timezone_id,
+                ignore_https_errors=True,
+            )
+            page = await context.new_page()
         recorder = _SessionRecorder(cfg)
+        recorder.minimum_observation_ms = cfg.minimum_observation_ms_by_host.get(ev.split_url(real_url)[0], 0)
+        recorder.readiness_window_key = cfg.readiness_window_key_by_host.get(ev.split_url(real_url)[0], '')
         recorder.attach(page, context)
 
         try:
@@ -327,48 +392,217 @@ class Collector:
                 # and a TIMEOUT is excluded from detection, so we would throw
                 # away perfectly good evidence on exactly the accounts we care
                 # about most. Real failures (DNS, TLS, refused) still raise.
-                response = await page.goto(
-                    real_url, wait_until="commit", timeout=cfg.nav_timeout_ms
-                )
+                with _stage(timings, "navigation"):
+                    response = await recorder.observe(page.goto(
+                        real_url, wait_until="commit", timeout=cfg.nav_timeout_ms
+                    ))
             except PlaywrightError as exc:
                 message = str(exc).splitlines()[0]
                 if "Timeout" in message:
                     result["scan"]["status"] = ev.STATUS_TIMEOUT
                     warnings.append(f"navigation timeout: {ev.redact(message, 200)}")
+                    if recorder.document_revision == 0 and recorder.main_response is None:
+                        # No document has arrived. Waiting for load, scroll and
+                        # probe cannot make this TIMEOUT a trustworthy absence.
+                        # Committed slow sites retain their entire observation budget.
+                        result["scan"]["stop_reason"] = "navigation_uncommitted"
+                        warnings.append("no main document committed; skipped load, interaction and probe waits")
+                        return result
                 else:
                     result["scan"]["status"] = ev.STATUS_NAV_FAILED
                     result["scan"]["error"] = ev.redact(message, 300)
                     # A DNS or TLS failure leaves nothing to observe.
-                    await context.close()
                     return result
 
-            # DOM readiness and `load` are both best-effort. Ad-heavy pages
-            # often never fire `load` cleanly, and we would rather observe a
-            # partially loaded page than give up on it.
-            for state, budget in (
-                ("domcontentloaded", cfg.nav_timeout_ms),
-                ("load", cfg.settle_ms),
-            ):
+            # Checkpoint profiles wait for the common bootstrap before scroll
+            # interactions can trigger more lazy resources. Waiting for native
+            # load first would waste 6-26s on pages whose load event stalls even
+            # though their common bootstrap already ran via its own fallback.
+            bootstrap_ready = True
+            if recorder.readiness_window_key:
                 try:
-                    await page.wait_for_load_state(state, timeout=budget)
+                    with _stage(timings, "bootstrap"):
+                        await recorder.observe(page.wait_for_function(
+                            'key => { const state = (' + _READINESS_JS + ')(key); '
+                            'return state.ready === "complete" && state.present && !!document.body; }',
+                            arg=recorder.readiness_window_key,
+                            timeout=max(1, cfg.readiness_timeout_ms -
+                                        (time.monotonic() - recorder.last_navigation) * 1000),
+                            polling=250))
                 except PlaywrightError:
-                    warnings.append(f"{state} did not fire within its budget")
+                    bootstrap_ready = False
+                    warnings.append('common bootstrap did not become ready within its budget')
+            else:
+                # DOM readiness and load are best-effort for ordinary sites.
+                for state, budget in (
+                    ("domcontentloaded", cfg.nav_timeout_ms),
+                    ("load", cfg.settle_ms),
+                ):
+                    try:
+                        with _stage(timings, state):
+                            await recorder.observe(page.wait_for_load_state(state, timeout=budget))
+                    except PlaywrightError:
+                        warnings.append(f"{state} did not fire within its budget")
 
-            if cfg.interact:
-                await self._nudge(page, warnings)
+            if cfg.interact and bootstrap_ready:
+                with _stage(timings, "interaction"):
+                    await recorder.observe(self._bounded_nudge(page, warnings))
 
-            await page.wait_for_timeout(cfg.settle_ms)
+            # A redirect during settling/probing invalidates the runtime view.
+            # Retry the observation once, without navigating or bypassing access
+            # controls. The enclosing hard timeout still bounds the whole visit.
+            for attempt in range(2):
+                with _stage(timings, "settle"):
+                    await recorder.observe(self._bounded_settle(page, recorder))
+                revision = recorder.document_revision
+                with _stage(timings, "body_drain"):
+                    await recorder.observe(recorder.drain())
+                # Body reads can take time. Probe the runtime afterwards so
+                # evidence does not mix fresh network traffic with a stale DOM.
+                with _stage(timings, "probe"):
+                    probe = await recorder.observe(self._run_probe(page, warnings))
+                if probe and revision == recorder.document_revision:
+                    break
+                probe = {}
+                if attempt == 0:
+                    warnings.append("runtime observation interrupted or invalid; waiting for the current page once")
+                    try:
+                        with _stage(timings, "domcontentloaded"):
+                            await recorder.observe(page.wait_for_load_state("domcontentloaded", timeout=cfg.nav_timeout_ms))
+                    except PlaywrightError:
+                        warnings.append("current document did not become ready within its budget")
+                    if cfg.interact:
+                        with _stage(timings, "interaction"):
+                            await recorder.observe(self._bounded_nudge(page, warnings))
 
-            probe = await self._run_probe(page, warnings)
-            await recorder.drain()
-
-            self._assemble(result, url, page, response, probe, recorder, warnings)
+            with _stage(timings, "assemble"):
+                self._assemble(result, url, page, recorder.main_response or response, probe, recorder, warnings)
+            if recorder.observation:
+                result['scan']['observation'] = recorder.observation
+                if not recorder.observation['stable'] and result['scan']['status'] == ev.STATUS_OK:
+                    result['scan']['status'] = ev.STATUS_PARTIAL
+                    result['scan']['block_marker'] = 'partial:page bootstrap or delayed scripts did not settle within observation budget'
+                    warnings.append('page bootstrap or delayed script observation incomplete; excluded from absence comparisons')
+        except _ObservationTimeout as exc:
+            # Keep the collected network diagnostics, but never judge a stack
+            # from an unfinished runtime read or a continuously changing page.
+            result['scan']['status'] = ev.STATUS_PARTIAL
+            if recorder.block_marker:
+                result['scan']['status'] = ev.STATUS_BLOCKED
+                result['scan']['block_marker'] = recorder.block_marker
+            result['scan']['stop_reason'] = exc.reason
+            result['scan']['document_navigations'] = recorder.document_revision
+            warnings.append(f'{exc.reason}: observation incomplete; excluded from detection and absence comparisons')
+            with _stage(timings, 'assemble'):
+                self._assemble(result, url, page, recorder.main_response or response, {}, recorder, warnings)
         finally:
             try:  # noqa: SIM105 — a failed close must not mask the scan result
-                await context.close()
+                with _stage(timings, "cleanup"):
+                    await context.close()
             except PlaywrightError:
                 pass
         return result
+
+    async def _bounded_settle(self, page, recorder):
+        cfg = self.config
+        budget = max(cfg.settle_timeout_ms, cfg.settle_ms)
+        # Preserve explicit delayed-site floors and their existing script grace.
+        if recorder.minimum_observation_ms or recorder.readiness_window_key:
+            budget = max(budget, recorder.minimum_observation_ms,
+                         cfg.readiness_timeout_ms if recorder.readiness_window_key else 0)
+            budget += cfg.settle_ms + cfg.late_script_grace_ms
+        try:
+            await asyncio.wait_for(self._wait_for_settle(page, recorder), budget / 1000)
+        except TimeoutError as exc:
+            raise _ObservationTimeout('settle_timeout') from exc
+
+    async def _wait_for_settle(self, page, recorder) -> None:
+        """Give the final document a full quiet window after each navigation."""
+        quiet_since = time.monotonic()
+        if recorder.readiness_window_key:
+            await self._wait_for_readiness(page, recorder, quiet_since)
+            return
+        minimum = recorder.minimum_observation_ms / 1000
+        if minimum:
+            # Only opted-in hosts pay this cost. A fresh navigation restarts
+            # its floor, while scan() still enforces the absolute hard timeout.
+            while True:
+                now = time.monotonic()
+                floor = max(quiet_since, recorder.last_navigation) + self.config.settle_ms / 1000
+                floor = max(floor, recorder.last_navigation + minimum)
+                deadline = floor + self.config.late_script_grace_ms / 1000
+                quiet = now - max(recorder.last_script_activity, recorder.last_navigation) >= self.config.settle_ms / 1000
+                if now >= floor and ((quiet and not recorder.pending_scripts) or now >= deadline):
+                    ready = await page.evaluate('() => document.readyState')
+                    stable = quiet and not recorder.pending_scripts and ready != 'loading'
+                    if stable or now >= deadline:
+                        recorder.observation = {
+                            'minimum_ms': recorder.minimum_observation_ms,
+                            'observed_ms': round((time.monotonic() - recorder.last_navigation) * 1000),
+                            'pending_scripts': len(recorder.pending_scripts),
+                            'ready_state': ready, 'stable': stable,
+                        }
+                        return
+                await page.wait_for_timeout(min(500, max(1, (deadline - now) * 1000)))
+        while True:
+            remaining = self.config.settle_ms / 1000 - (
+                time.monotonic() - max(quiet_since, recorder.last_navigation))
+            if remaining <= 0:
+                return
+            await page.wait_for_timeout(remaining * 1000)
+
+    async def _wait_for_readiness(self, page, recorder, quiet_since: float) -> None:
+        """Observe a site-owned bootstrap marker without executing its code.
+
+        readyState may be complete while a load-dependent tag bundle has never
+        run. A verified common bootstrap marker distinguishes that case from
+        a vendor actually being absent. No vendor name or fingerprint is used.
+        """
+        cfg = self.config
+        ready_since = None
+        revision = recorder.document_revision
+        while True:
+            if recorder.document_revision != revision:
+                ready_since = None
+                revision = recorder.document_revision
+            state = await page.evaluate(_READINESS_JS, recorder.readiness_window_key)
+            now = time.monotonic()
+            ready = state['ready'] == 'complete' and state['present']
+            if not ready:
+                ready_since = None
+            elif ready_since is None:
+                ready_since = now
+            deadline = recorder.last_navigation + cfg.readiness_timeout_ms / 1000
+            # Only a completed bootstrap may use the existing script grace.
+            if ready_since is not None:
+                deadline += cfg.late_script_grace_ms / 1000
+            quiet = now - max(quiet_since, recorder.last_navigation,
+                              recorder.last_script_activity, ready_since or now) >= cfg.settle_ms / 1000
+            floor_met = now - recorder.last_navigation >= recorder.minimum_observation_ms / 1000
+            stable = ready and quiet and not recorder.pending_scripts and floor_met
+            if stable or now >= deadline:
+                recorder.observation = {
+                    'mode': 'bootstrap_checkpoint',
+                    'readiness_window_key': recorder.readiness_window_key,
+                    'checkpoint_observed': state['present'],
+                    'budget_ms': cfg.readiness_timeout_ms,
+                    'minimum_ms': recorder.minimum_observation_ms,
+                    'observed_ms': round((now - recorder.last_navigation) * 1000),
+                    'pending_scripts': len(recorder.pending_scripts),
+                    'ready_state': state['ready'], 'stable': stable,
+                    'load_event_observed': recorder.last_load is not None,
+                    'checkpoint_observed_ms': (round((ready_since - recorder.last_navigation) * 1000)
+                                               if ready_since is not None else None),
+                }
+                return
+            await page.wait_for_timeout(min(500, max(1, (deadline - now) * 1000)))
+
+    async def _bounded_nudge(self, page, warnings):
+        try:
+            await asyncio.wait_for(self._nudge(page, warnings),
+                                   max(self.config.interaction_timeout_ms, self.config.interaction_ms) / 1000)
+        except TimeoutError as exc:
+            raise _ObservationTimeout('interaction_timeout') from exc
 
     async def _nudge(self, page, warnings: list[str]) -> None:
         """Scroll and move the pointer so lazily-triggered tags actually fire.
@@ -393,7 +627,24 @@ class Collector:
 
     async def _run_probe(self, page, warnings: list[str]) -> dict:
         try:
-            return await page.evaluate(_PROBE_JS)
+            # Some legacy pages replace built-ins used by Playwright's object
+            # serializer. A JSON string crosses that boundary without invoking
+            # object traversal in the page's modified runtime.
+            raw = await asyncio.wait_for(
+                page.evaluate("async () => JSON.stringify(await (" + _PROBE_JS + ")())"),
+                self.config.probe_timeout_ms / 1000,
+            )
+            probe = json.loads(raw) if isinstance(raw, str) else None
+            if isinstance(probe, dict) and isinstance(probe.get("page_info"), dict):
+                return probe
+            warnings.append("runtime probe returned an invalid structure")
+            return {}
+        except TimeoutError as exc:
+            # Retrying in the same blocked renderer only consumes another budget.
+            raise _ObservationTimeout('probe_timeout') from exc
+        except (ValueError, TypeError):
+            warnings.append("runtime probe returned invalid JSON")
+            return {}
         except PlaywrightError as exc:
             warnings.append(f"runtime probe failed: {ev.redact(str(exc), 200)}")
             return {}
@@ -539,7 +790,7 @@ class Collector:
         # Last, because it needs the counts: a 200 response that carries no
         # observable stack is not an observation of the site.
         if scan["status"] == ev.STATUS_OK:
-            thin = ev.detect_thin(result["counts"], scan["title"])
+            thin = ev.detect_thin(result["counts"], scan["title"], page_info.get("visible_text_head", ""))
             if thin:
                 scan["status"] = ev.STATUS_THIN
                 scan["block_marker"] = f"thin:{thin}"
@@ -564,12 +815,42 @@ class _SessionRecorder:
         self._index: dict[tuple, int] = {}
         self._body_tasks: list[asyncio.Task] = []
         self._bodies_read = 0
-        self._main_document_seen = False
+        self.main_response = None
+        self.document_revision = 0
+        self.last_navigation = 0.0
+        self.minimum_observation_ms = 0
+        self.readiness_window_key = ''
+        self.last_load: float | None = None
+        self.last_script_activity = 0.0
+        self.pending_scripts: set = set()
+        self.observation: dict = {}
+        self.block_marker = None
+        self._blocked = asyncio.Event()
+        self._page = None
+
+    async def observe(self, coroutine):
+        """Stop waiting immediately when the site explicitly refuses access."""
+        operation = asyncio.create_task(coroutine)
+        refusal = asyncio.create_task(self._blocked.wait())
+        try:
+            await asyncio.wait((operation, refusal), return_when=asyncio.FIRST_COMPLETED)
+            if self.block_marker:
+                raise _ObservationTimeout('site_dialog_blocked')
+            return await operation
+        finally:
+            for task in (operation, refusal):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(operation, refusal, return_exceptions=True)
 
     def attach(self, page, context) -> None:
+        self._page = page
+        page.on("framenavigated", self._on_navigation)
+        page.on("load", self._on_load)
         page.on("request", self._on_request)
         page.on("response", self._on_response)
         page.on("requestfailed", self._on_request_failed)
+        page.on("requestfinished", self._on_request_finished)
         page.on("console", self._on_console)
         page.on("pageerror", self._on_page_error)
         # Handled here rather than by the driver's default: a dialog opening
@@ -579,13 +860,45 @@ class _SessionRecorder:
 
     # -- listeners ------------------------------------------------------------
 
+    def _on_navigation(self, frame) -> None:
+        if frame == self._page.main_frame:
+            self.document_revision += 1
+            self.last_navigation = time.monotonic()
+            self.pending_scripts.clear()
+            self.last_script_activity = 0.0
+            self.last_load = None
+
+    def _on_load(self) -> None:
+        self.last_load = time.monotonic()
+
     async def _on_dialog(self, dialog) -> None:
+        if len(self.console) < self.config.max_console_messages:
+            self.console.append({'type': 'dialog', 'text': ev.redact(dialog.message, 240)})
+        # Narrow, observed refusal wording. Ordinary cookie/notice dialogs are
+        # still dismissed normally; do not circumvent a site's inspection guard.
+        if dialog.type == 'alert':
+            for text, marker in (
+                ('개발자 도구 사용이 불가능합니다', 'developer tools access denied'),
+                ('개발자 도구 사용이 탐지되었습니다', 'developer tools access denied'),
+                ('시스템에서 비정상적인 활동이 감지되었습니다', 'unusual activity detected'),
+            ):
+                if text in dialog.message:
+                    self.block_marker = 'dialog:' + marker
+                    self._blocked.set()
+                    break
         with contextlib.suppress(PlaywrightError):
             await dialog.dismiss()
 
     def _on_request(self, request) -> None:
         try:
             url = request.url
+            if (self.minimum_observation_ms or self.readiness_window_key) and request.resource_type == 'script':
+                self.last_script_activity = time.monotonic()
+                # Locally generated blob/data scripts have no network transfer;
+                # Chromium can emit request without a matching finished event.
+                # Observe their activity, but do not wait forever for a download.
+                if url.startswith(('http://', 'https://')):
+                    self.pending_scripts.add(request)
             if url.startswith(("data:", "blob:", "about:")):
                 return
             # Account IDs are read from the full URL before the query is dropped.
@@ -617,8 +930,9 @@ class _SessionRecorder:
             if key in self._index:
                 self.requests[self._index[key]]["status"] = response.status
 
-            if not self._main_document_seen and response.request.is_navigation_request():
-                self._main_document_seen = True
+            if (response.request.is_navigation_request()
+                    and response.request.frame == self._page.main_frame):
+                self.main_response = response
                 self._body_tasks.append(asyncio.create_task(self._read_headers(response)))
 
             if (
@@ -632,12 +946,18 @@ class _SessionRecorder:
             pass
 
     def _on_request_failed(self, request) -> None:
+        self._on_request_finished(request)
         try:
             host, _ = ev.split_url(request.url)
             if _is_real_host(host):
                 self.failed_hosts.append(host)
         except Exception:  # noqa: BLE001
             pass
+
+    def _on_request_finished(self, request) -> None:
+        if request in self.pending_scripts:
+            self.pending_scripts.discard(request)
+            self.last_script_activity = time.monotonic()
 
     def _on_console(self, message) -> None:
         # Vendors label their own console output — `[SomeSDK] ready` —
@@ -667,6 +987,9 @@ class _SessionRecorder:
             headers = await response.all_headers()
         except PlaywrightError:
             return
+        if response != self.main_response:
+            return
+        self.document_headers.clear()
         for name in _INTERESTING_HEADERS:
             if name in headers:
                 self.document_headers[name] = headers[name][:8000]

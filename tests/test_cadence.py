@@ -42,6 +42,14 @@ def test_parse_duration_accepts_days_and_hours_only():
             cfg.parse_duration(bad)
 
 
+def test_cadence_start_date_is_validated():
+    assert cfg._read_cadence({'not_before': '2026-10-23'}).not_before == '2026-10-23'
+    assert cfg._read_cadence({}).not_before == ''
+    for bad in ('2026-02-30', 'tomorrow', True, 123):
+        with pytest.raises(cfg.ConfigError):
+            cfg._read_cadence({'not_before': bad})
+
+
 def test_cadence_section_round_trips_through_load(tmp_path):
     path = tmp_path / "radar.toml"
     path.write_text('[cadence]\ndefault = "3d"\nP1 = "12h"\n')
@@ -104,3 +112,32 @@ def test_a_blocked_attempt_still_counts_as_an_attempt(tmp_path):
             s, bat.jobs_for(s, tiers=["P1"]), CADENCE,
             now=scanned_at + timedelta(hours=12))
         assert not due and fresh == ["hot"]
+
+
+@pytest.mark.parametrize('days,tier', [(1, 'P1'), (7, 'P2')])
+def test_calendar_due_despite_earlier_timer_and_late_page_visit(tmp_path, monkeypatch, days, tier):
+    settings = cfg.Config(scan=cfg.ScanSettings(timezone='Asia/Seoul'))
+    monkeypatch.setattr(cfg, 'load', lambda: settings)
+    with Store(tmp_path / 'radar.db') as s:
+        s.import_watchlist(watchlist())
+        run = s.start_run(1)
+        scan = result('https://hot.example/')
+        scan['scan']['started_at'] = '2026-10-08T18:40:00+00:00'  # 03:40 KST
+        s.record_scan(run, 'hot', scan, False)
+        job = bat.Job('hot', 'hot', 'https://hot.example/', tier)
+        now = datetime.fromisoformat('2026-10-08T18:01:00+00:00') + timedelta(days=days)
+        assert bat.due_split(s, [job], CADENCE, now=now)[0] == [job]
+        assert bat.due_split(s, [job], CADENCE, now=now-timedelta(days=1))[0] == []
+
+
+def test_hour_cadence_and_new_urls_are_independent(tmp_path):
+    with Store(tmp_path / 'radar.db') as s:
+        s.import_watchlist(watchlist())
+        run = s.start_run(1)
+        s.record_scan(run, 'hot', result('https://hot.example/'), False)
+        scanned = datetime.fromisoformat('2026-09-04T00:00:00+00:00')
+        old = bat.Job('hot', 'hot', 'https://hot.example/', 'P1')
+        new = bat.Job('hot', 'hot', 'https://hot.example/product', 'P1')
+        cadence = cfg.CadenceSettings(tiers={'P1': '12h'})
+        assert bat.due_split(s, [old,new], cadence, now=scanned+timedelta(hours=11))[0] == [new]
+        assert bat.due_split(s, [old,new], cadence, now=scanned+timedelta(hours=12))[0] == [old,new]

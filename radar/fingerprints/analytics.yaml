@@ -130,6 +130,7 @@ fingerprints:
       hosts: [contentsquare.net, contentsquare.com]
       window: ["_uxa", "CS_CONF"]
 
+  # --- Korea pack (2026-09): mined from 996-site stored evidence ------------
 
   - id: acecounter
     name: ACE Counter

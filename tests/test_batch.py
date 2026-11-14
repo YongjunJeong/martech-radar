@@ -94,7 +94,7 @@ def test_two_identical_runs_produce_identical_verdicts(tmp_path, site, registry)
     """Idempotency on a page we control.
 
     Real sites rotate ad tech between visits, so this can only be asserted
-    against a static fixture — which is exactly why the removal rules
+    against a static fixture — which is exactly why Phase 4's removal rules
     have to tolerate flapping on live sites.
     """
     watch = watchlist(Target(id="stable", company="안정몰", industry="fashion",

@@ -57,9 +57,11 @@ def test_backup_task_writes_a_snapshot_into_the_workspace(store, registry, isola
     tasks.run_task(store.path, claimed, registry)
     row = store.task(claimed["id"])
     assert row["state"] == "done", row["error"]
-    snapshots = list((isolated_workspace / "backups").glob("radar-*.db"))
+    snapshots = list((isolated_workspace / "backups").glob("radar-*/manifest.json"))
     assert len(snapshots) == 1
-    with Store(snapshots[0]) as copy:
+    from radar.recovery import verify
+    verify(snapshots[0].parent)
+    with Store(snapshots[0].parent / 'data/radar.db') as copy:
         assert [r["id"] for r in copy.targets()] == ["acme"]
 
 

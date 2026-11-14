@@ -10,6 +10,7 @@
 {% if fingerprint.note %}<p class="note">{{ fingerprint.note }}</p>{% endif %}
 
 <h2>{{ t('vendor.users') }}</h2>
+{% if lang=='ko' %}<p class="note">각 기업의 마지막 정상 수집 결과입니다. 검출 근거 점수는 기술적 흔적을 합산한 값으로, 구매 가능성이나 실제 활용 수준을 나타내지 않습니다.</p>{% endif %}
 <table>
   <thead><tr><th>{{ t('common.company') }}</th><th>{{ t('common.industry') }}</th>
     <th class="n">{{ t('common.score') }}</th><th>{{ t('common.evidence_layers') }}</th></tr></thead>

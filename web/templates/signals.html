@@ -23,16 +23,7 @@
     </div>
     <h3 class="sig-co">{{ company_link(s.target_id, s.company) }}</h3>
     <p class="headline">{{ s.headline }}</p>
-    {% if not s.maturity %}<p class="detail">{{ s.detail }}</p>{% endif %}
-    {% if s.maturity %}
-      <p class="maturity">
-        {{ t('signals.maturity', total=s.maturity.total,
-              advertising=s.maturity.advertising, analytics=s.maturity.analytics) }}
-        {%- if s.maturity.attribution %}{{ t('signals.maturity.attribution', n=s.maturity.attribution) }}{% endif %}
-        {%- if s.maturity.experimentation %}{{ t('signals.maturity.experimentation', n=s.maturity.experimentation) }}{% endif %}
-        {{- t('signals.maturity.score', score=s.maturity.score) }}
-      </p>
-    {% endif %}
+    <p class="detail">{{ s.detail }}</p>
     {% for c in s.changes %}
       <p class="detail muted">
         {{ t('signals.change_detail', name=c.name, since=c.since_run,
@@ -63,16 +54,6 @@
     {{ t('ack.dismissed_count', n=dismissed_count) }}</a></p>
 {% elif show_dismissed %}
   <p class="note"><a href="?{{ 'kind=' ~ kind if kind }}">{{ t('ack.hide_dismissed') }}</a></p>
-{% endif %}
-
-{% if quiet %}
-<h2>{{ t('signals.quiet.title') }}</h2>
-<p class="note">{{ t('signals.quiet.note') }}</p>
-<ul class="inline">
-  {% for q in quiet %}
-    <li>{{ company_link(q.target_id, q.company) }} <span class="muted">{{ t('signals.quiet.score', score=q.maturity.score) }}</span></li>
-  {% endfor %}
-</ul>
 {% endif %}
 
 {% if unjudged %}

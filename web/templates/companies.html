@@ -5,20 +5,20 @@
 
 <div class="toolbar">
   <nav class="seg">
-    <a class="{{ 'on' if not state }}" href="/companies{{ '?industry=' ~ industry if industry }}">{{ t('common.all') }}</a>
-    <a class="{{ 'on' if state == 'engagement' }}" href="/companies?state=engagement{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.holders') }}</a>
-    <a class="{{ 'on' if state == 'greenfield' }}" href="/companies?state=greenfield{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.greenfield') }}</a>
-    <a class="{{ 'on' if state == 'moved' }}" href="/companies?state=moved{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.moved') }}</a>
-    <a class="{{ 'on' if state == 'unjudged' }}" href="/companies?state=unjudged{{ '&industry=' ~ industry if industry }}">{{ t('companies.filter.unjudged') }}</a>
+    <a class="{{ 'on' if not state }}" href="{{ request.url.remove_query_params('state') }}">{{ t('common.all') }}</a>
+    <a class="{{ 'on' if state == 'observed' }}" href="{{ request.url.include_query_params(state='observed') }}">{{ t('companies.filter.holders') }}</a>
+    <a class="{{ 'on' if state == 'no_tools' }}" href="{{ request.url.include_query_params(state='no_tools') }}">{{ t('companies.filter.no_tools') }}</a>
+    <a class="{{ 'on' if state == 'moved' }}" href="{{ request.url.include_query_params(state='moved') }}">{{ t('companies.filter.moved') }}</a>
+    <a class="{{ 'on' if state == 'unjudged' }}" href="{{ request.url.include_query_params(state='unjudged') }}">{{ t('companies.filter.unjudged') }}</a>
   </nav>
   <form method="get" action="/companies" class="pick">
     {% if state %}<input type="hidden" name="state" value="{{ state }}">{% endif %}
-    <select name="industry" onchange="this.form.submit()" aria-label="{{ t('common.industry') }}">
+    <select name="industry" {% if industry is not string and industry is not none %}multiple{% endif %} aria-label="{{ t('common.industry') }}">
       <option value="">{{ t('companies.pick_industry') }}</option>
       {% for code, label in industries|dictsort(by='value') %}
-        <option value="{{ code }}" {{ 'selected' if industry == code }}>{{ label }}</option>
+        <option value="{{ code }}" {{ 'selected' if industry and code in industry }}>{{ label }}</option>
       {% endfor %}
-    </select>
+    </select><button type="submit">{{ '적용' if lang == 'ko' else 'Apply' }}</button>
   </form>
 </div>
 
@@ -26,7 +26,7 @@
   <thead><tr>
     <th>{{ t('common.company') }}</th><th>{{ t('common.industry') }}</th>
     <th class="n">{{ t('common.vendors') }}</th>
-    <th>{{ t('category.engagement') }}</th><th>{{ t('common.change') }}</th>
+    <th>{{ t('common.vendors') }}</th><th>{{ t('common.change') }}</th>
     <th>{{ t('common.state') }}</th>
   </tr></thead>
   <tbody>
@@ -41,12 +41,12 @@
         {% elif c.off_domain %}
           <span class="chip s-removed">{{ t('companies.chip.off_domain') }}</span>
           <span class="muted url">{{ c.landing|join(', ') }}</span>
-        {% elif c.engagement %}
-          {% for e in c.engagement %}<a href="/vendors/{{ e.id }}">{{ e.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
-        {% elif c.engagement_pending %}
-          {% for e in c.engagement_pending %}<a class="muted" href="/vendors/{{ e.id }}">{{ e.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+        {% elif c.observed %}
+          {% for e in c.observed %}<a href="/vendors/{{ e.id }}">{{ e.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+        {% elif c.pending %}
+          {% for e in c.pending %}<a class="muted" href="/vendors/{{ e.id }}">{{ e.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
           <span class="chip s-removal_candidate">{{ state_label.get('REMOVAL_CANDIDATE') }}</span>
-        {% else %}<span class="hot">{{ t('companies.chip.greenfield') }}</span>{% endif %}
+        {% else %}<span class="hot">{{ t('companies.chip.no_tools') }}</span>{% endif %}
       </td>
       <td>{% for state, group in c.moved|groupby('state') %}<span class="chip s-{{ state|lower }}">{{ state_label.get(state, state) }}{% if group|length > 1 %} ×{{ group|length }}{% endif %}</span>{% endfor %}</td>
       <td class="muted nowrap">
