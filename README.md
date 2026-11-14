@@ -44,18 +44,28 @@
 
 첫 검출은 신규 도입, 미검출은 사용 중단을 뜻하지 않습니다. 차단·시간 초과·불완전한 관측은 판단 불가로 구분합니다. 연락 여부를 결정할 때는 화면에 표시된 관측 범위와 근거를 확인해야 합니다. 메일 발송 기능은 없습니다.
 
-## 빠르게 시작하기
+## 내 컴퓨터에서 시작하기
 
-Python 3.11 이상이 필요합니다. Linux/Python 3.12가 기준 환경이며, 상시 운영은 Ubuntu의 systemd를 사용합니다. Chromium 시스템 라이브러리도 필요합니다.
+Python 3.11 이상과 Chromium이 필요합니다. 앱을 로컬에서 실행하고 브라우저로 접속할 수 있습니다. 서버 운영은 필요에 따라 선택하세요.
+
+| 실행 환경 | 시작 방법과 검증 범위 |
+| --- | --- |
+| macOS 데스크톱 | 아래 로컬 설치 절차를 사용합니다. 합성 데이터로 대시보드 실행과 README 화면 캡처를 확인했습니다. |
+| Linux 데스크톱·서버 | 같은 로컬 설치 절차를 사용합니다. GitHub Actions는 Ubuntu/Python 3.12 기준으로 구성되어 있습니다. |
+| Windows | WSL2의 Linux 터미널에서 설치하고 실행하는 경로를 권장합니다. 현재 코드에 `fcntl` 등 POSIX 의존성이 있어 Windows 네이티브 실행은 지원 범위 밖입니다. WSL2 실행은 별도 검증이 필요합니다. |
+
+저장소 루트에서 다음 명령을 실행하세요.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.lock
 .venv/bin/pip install --no-deps -e .
-.venv/bin/playwright install --with-deps chromium
+.venv/bin/playwright install chromium
 cp radar.example.toml radar.toml
 cp targets.example.yaml targets.yaml
 ```
+
+Linux에서 Chromium 시스템 라이브러리가 부족하면 `.venv/bin/playwright install-deps chromium`으로 설치합니다. 이 단계에는 관리자 권한이 필요할 수 있습니다.
 
 `radar.toml`에서 한국어 UI와 수집 주기를 설정합니다. 예제 설정은 주 1회이므로 매일 수집하려면 아래와 같이 바꿉니다. 기존 섹션을 수정하고 같은 이름의 섹션을 중복 추가하지 마세요.
 
@@ -95,6 +105,8 @@ bin/radar runs
 bin/radar calls
 ```
 
+로컬 대시보드와 워커는 터미널의 프로세스가 실행되는 동안 동작합니다. 노트북이 잠들거나 프로세스를 종료하면 수집이 중단됩니다. 지속적인 모니터링이 필요하면 아래 상시 운영 방식을 선택하세요.
+
 처음 수집한 데이터는 비교 기준입니다. 정상 관측이 쌓여야 변화를 판단할 수 있습니다. 특정 날짜 이후의 관측만 비교하려면 `[analysis].since`에 `YYYY-MM-DD`를 지정합니다. 원본 이력은 삭제하지 않습니다.
 
 ## Codex 계정으로 AI 작업 실행하기
@@ -120,7 +132,13 @@ timeout_seconds = 240
 
 자세한 로그인·실행 격리·사용량·실패 처리·지원 버전은 [Codex 연동](docs/CODEX.md), 세일즈 흐름은 [제안 준비 안내](docs/SALES_PREPARATION.md)를 참고하세요. 기존 `backend="cli"`는 Claude CLI이고, `backend="anthropic"`은 별도 API 과금 방식입니다. 기존 설치의 기본 백엔드는 자동으로 바꾸지 않습니다.
 
-## Ubuntu에서 상시 운영하기
+## 선택 사항 · 예약 실행과 상시 운영
+
+필요할 때 로컬에서 `bin/radar batch --due`를 실행하거나, 운영체제의 스케줄러에 등록할 수 있습니다. macOS에서는 launchd에 저장소의 `bin/radar` 절대 경로와 `batch --due` 인자를 지정하고, `RADAR_HOME`도 절대 경로로 설정하세요. macOS용 설치 자동화와 launchd 실행은 별도 검증이 필요합니다.
+
+### Linux systemd 서비스
+
+Ubuntu 등 systemd를 사용하는 Linux에서는 제공된 설치기로 대시보드·워커·예약 수집을 관리할 수 있습니다. 예약 wrapper인 `bin/weekly-scan`에는 util-linux의 `flock`이 필요합니다.
 
 새 설치에서 설정과 수집을 검증한 후 다음 명령으로 사용자 서비스를 설치합니다. 기존 설치에서는 같은 이름의 unit을 갱신하므로 운영 절차에 따라 적용하세요.
 
